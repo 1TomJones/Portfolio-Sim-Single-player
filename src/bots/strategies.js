@@ -181,6 +181,7 @@ class SingleRandomBot extends StrategyBot {
     let price = null;
     let k = null;
     let mode = isAggressive ? "aggressive" : "passive";
+    let orderType = "limit";
 
     if (side === "BUY") {
       const hasSellOrders = bookAsks.length > 0 || Number.isFinite(bestAsk);
@@ -195,10 +196,9 @@ class SingleRandomBot extends StrategyBot {
           }
           action = "rebuild-book";
         } else {
-          k = drawK();
-          const basePrice = Number.isFinite(bestAsk) ? bestAsk : roundedLast;
-          price = roundToTick(basePrice + k * tick, tick);
-          action = "marketable-limit";
+          orderType = "market";
+          action = "market";
+          price = Number.isFinite(bestAsk) ? bestAsk : roundedLast;
         }
       } else {
         const offset = pickOffsetTicks();
@@ -217,10 +217,9 @@ class SingleRandomBot extends StrategyBot {
           }
           action = "rebuild-book";
         } else {
-          k = drawK();
-          const basePrice = Number.isFinite(bestBid) ? bestBid : roundedLast;
-          price = roundToTick(basePrice - k * tick, tick);
-          action = "marketable-limit";
+          orderType = "market";
+          action = "market";
+          price = Number.isFinite(bestBid) ? bestBid : roundedLast;
         }
       } else {
         const offset = pickOffsetTicks();
@@ -228,12 +227,16 @@ class SingleRandomBot extends StrategyBot {
       }
     }
 
-    if (!Number.isFinite(price)) {
+    if (orderType !== "market" && !Number.isFinite(price)) {
       this.setRegime("awaiting-price");
       return { skipped: true, reason: "invalid-price" };
     }
 
-    this.submitOrder({ type: "limit", side, price, quantity, source: "random" });
+    if (orderType === "market") {
+      this.execute({ side, quantity, source: "random" });
+    } else {
+      this.submitOrder({ type: "limit", side, price, quantity, source: "random" });
+    }
     this.setRegime("single-random");
     return {
       regime: this.currentRegime,
