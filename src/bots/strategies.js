@@ -196,7 +196,8 @@ class SingleRandomBot extends StrategyBot {
           action = "rebuild-book";
         } else {
           k = drawK();
-          price = roundToTick(roundedLast + k * tick, tick);
+          const basePrice = Number.isFinite(bestAsk) ? bestAsk : roundedLast;
+          price = roundToTick(basePrice + k * tick, tick);
           action = "marketable-limit";
         }
       } else {
@@ -217,7 +218,8 @@ class SingleRandomBot extends StrategyBot {
           action = "rebuild-book";
         } else {
           k = drawK();
-          price = roundToTick(roundedLast - k * tick, tick);
+          const basePrice = Number.isFinite(bestBid) ? bestBid : roundedLast;
+          price = roundToTick(basePrice - k * tick, tick);
           action = "marketable-limit";
         }
       } else {
