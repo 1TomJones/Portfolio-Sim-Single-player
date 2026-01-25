@@ -12,8 +12,7 @@ export class MarketEngine {
     this.cancelLog = [];
     this.tickActivity = this._createTickActivity();
     this.pendingMarketOrders = this._createPendingMarketOrders();
-    this.darkBook = this._createDarkBook();
-    this.darkOrders = new Map();
+    this.darkPool = this._createDarkPool();
     this.nextDarkOrderId = 1;
     this.icebergOrders = new Map();
     this.icebergChildIndex = new Map();
@@ -38,8 +37,7 @@ export class MarketEngine {
     this.cancelLog = [];
     this.tickActivity = this._createTickActivity();
     this.pendingMarketOrders = this._createPendingMarketOrders();
-    this.darkBook = this._createDarkBook();
-    this.darkOrders = new Map();
+    this.darkPool = this._createDarkPool();
     this.nextDarkOrderId = 1;
     this.icebergOrders = new Map();
     this.icebergChildIndex = new Map();
@@ -68,8 +66,7 @@ export class MarketEngine {
     this.cancelLog = [];
     this.tickActivity = this._createTickActivity();
     this.pendingMarketOrders = this._createPendingMarketOrders();
-    this.darkBook = this._createDarkBook();
-    this.darkOrders = new Map();
+    this.darkPool = this._createDarkPool();
     this.nextDarkOrderId = 1;
     this.icebergOrders = new Map();
     this.icebergChildIndex = new Map();
@@ -98,8 +95,8 @@ export class MarketEngine {
   }
 
   getDarkBookView(levels = 12) {
-    const bids = this._darkLevelsToArray(this.darkBook.bids, { descending: true, levels });
-    const asks = this._darkLevelsToArray(this.darkBook.asks, { descending: false, levels });
+    const bids = this._darkLevelsToArray(this.darkPool.bySide.BUY, { descending: true, levels });
+    const asks = this._darkLevelsToArray(this.darkPool.bySide.SELL, { descending: false, levels });
     const bestBid = bids.find((lvl) => Number(lvl?.size) > 0)?.price ?? null;
     const bestAsk = asks.find((lvl) => Number(lvl?.size) > 0)?.price ?? null;
     const spread = Number.isFinite(bestBid) && Number.isFinite(bestAsk) ? bestAsk - bestBid : null;
@@ -112,9 +109,8 @@ export class MarketEngine {
             ? bestAsk
             : null;
     const orders = [];
-    const seen = new Set();
-    for (const order of this.darkOrders.values()) {
-      seen.add(order.id);
+    for (const order of this.darkPool.orders.values()) {
+      if (Number(order.remaining ?? 0) <= 0) continue;
       orders.push({
         id: order.id,
         side: order.side,
@@ -123,20 +119,6 @@ export class MarketEngine {
         ownerId: order.ownerId,
         createdAt: order.createdAt,
       });
-    }
-    for (const player of this.players.values()) {
-      for (const entry of player.darkOrders.values()) {
-        if (seen.has(entry.id)) continue;
-        seen.add(entry.id);
-        orders.push({
-          id: entry.id,
-          side: entry.side,
-          price: entry.price,
-          remaining: entry.remainingUnits ?? entry.remaining,
-          ownerId: player.id,
-          createdAt: entry.createdAt,
-        });
-      }
     }
     orders.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
     return {
@@ -491,10 +473,13 @@ export class MarketEngine {
     };
   }
 
-  _createDarkBook() {
+  _createDarkPool() {
     return {
-      bids: new Map(),
-      asks: new Map(),
+      orders: new Map(),
+      bySide: {
+        BUY: new Map(),
+        SELL: new Map(),
+      },
     };
   }
 
@@ -944,57 +929,56 @@ export class MarketEngine {
     return { ...entry };
   }
 
-  _darkSideMap(side) {
-    return side === "BUY" ? this.darkBook.bids : this.darkBook.asks;
-  }
-
-  _darkLevelKey(price) {
+  _darkPriceKey(price) {
     return price.toFixed(6);
   }
 
-  _getDarkLevel(side, price) {
-    const map = this._darkSideMap(side);
-    return map.get(this._darkLevelKey(price)) ?? null;
+  _darkSideIndex(side) {
+    return side === "BUY" ? this.darkPool.bySide.BUY : this.darkPool.bySide.SELL;
   }
 
-  _ensureDarkLevel(side, price) {
-    const map = this._darkSideMap(side);
-    const key = this._darkLevelKey(price);
-    let level = map.get(key);
-    if (!level) {
-      level = { side, price, orders: [], totalVolume: 0 };
-      map.set(key, level);
+  _trackDarkOrder(order) {
+    const index = this._darkSideIndex(order.side);
+    const key = this._darkPriceKey(order.price);
+    const bucket = index.get(key);
+    if (bucket) {
+      bucket.add(order.id);
+    } else {
+      index.set(key, new Set([order.id]));
     }
-    return level;
   }
 
-  _darkLevelsToArray(map, { descending = false, levels = 12 } = {}) {
-    const sorted = Array.from(map.values()).sort((a, b) => (descending ? b.price - a.price : a.price - b.price));
-    const result = [];
-    for (const level of sorted) {
-      const size = Number(level.totalVolume ?? 0);
-      if (size <= 1e-9) continue;
-      result.push({ price: level.price, size });
-      if (result.length >= levels) break;
-    }
-    return result;
+  _untrackDarkOrder(order) {
+    const index = this._darkSideIndex(order.side);
+    const key = this._darkPriceKey(order.price);
+    const bucket = index.get(key);
+    if (!bucket) return;
+    bucket.delete(order.id);
+    if (!bucket.size) index.delete(key);
+  }
+
+  _darkLevelsToArray(index, { descending = false, levels = 12 } = {}) {
+    const sorted = Array.from(index.entries())
+      .map(([key, bucket]) => {
+        let size = 0;
+        for (const orderId of bucket) {
+          const order = this.darkPool.orders.get(orderId);
+          if (order && Number(order.remaining ?? 0) > 0) {
+            size += order.remaining;
+          }
+        }
+        return { price: Number(key), size };
+      })
+      .filter((level) => Number(level.size ?? 0) > 1e-9)
+      .sort((a, b) => (descending ? b.price - a.price : a.price - b.price));
+    return sorted.slice(0, levels);
   }
 
   _detachDarkOrder(orderId) {
-    const order = this.darkOrders.get(orderId);
+    const order = this.darkPool.orders.get(orderId);
     if (!order) return null;
-    const level = this._getDarkLevel(order.side, order.price);
-    if (level) {
-      const idx = level.orders.findIndex((entry) => entry.id === orderId);
-      if (idx >= 0) {
-        const [entry] = level.orders.splice(idx, 1);
-        level.totalVolume = Math.max(0, level.totalVolume - entry.remaining);
-      }
-      if (!level.orders.length || level.totalVolume <= 1e-9) {
-        this._darkSideMap(order.side).delete(this._darkLevelKey(order.price));
-      }
-    }
-    this.darkOrders.delete(orderId);
+    this._untrackDarkOrder(order);
+    this.darkPool.orders.delete(orderId);
     const owner = order.ownerId ? this.players.get(order.ownerId) : null;
     if (owner) {
       owner.darkOrders.delete(orderId);
@@ -1014,10 +998,8 @@ export class MarketEngine {
       totalQty: quantized,
       createdAt: Date.now(),
     };
-    const level = this._ensureDarkLevel(side, price);
-    level.orders.push(order);
-    level.totalVolume += order.remaining;
-    this.darkOrders.set(order.id, order);
+    this.darkPool.orders.set(order.id, order);
+    this._trackDarkOrder(order);
     const player = ownerId ? this.players.get(ownerId) : null;
     if (player) {
       this._recordDarkOrder(player, order);
@@ -1027,29 +1009,29 @@ export class MarketEngine {
 
   _matchDarkOrder(player, side, price, qty) {
     const oppositeSide = side === "BUY" ? "SELL" : "BUY";
-    const level = this._getDarkLevel(oppositeSide, price);
-    if (!level || !level.orders.length) {
+    const index = this._darkSideIndex(oppositeSide);
+    const key = this._darkPriceKey(price);
+    const bucket = index.get(key);
+    if (!bucket || !bucket.size) {
       return { filled: 0, remaining: qty, fills: [] };
     }
 
     const fills = [];
     let remaining = qty;
     const lotSize = this._lotSize();
-    while (remaining > 1e-9 && level.orders.length) {
+    while (remaining > 1e-9 && bucket.size) {
       let makerOrder = null;
       let maker = null;
-      for (let i = 0; i < level.orders.length; i += 1) {
-        const candidate = level.orders[i];
+      for (const orderId of Array.from(bucket)) {
+        const candidate = this.darkPool.orders.get(orderId);
         const candidateMaker = candidate?.ownerId ? this.players.get(candidate.ownerId) : null;
         if (!candidateMaker || candidate.remaining <= 1e-9) {
-          this._detachDarkOrder(candidate.id);
-          i -= 1;
+          if (candidate?.id) this._detachDarkOrder(candidate.id);
           continue;
         }
         if (candidate.ownerId === player.id) continue;
         if (this._isLossLimitBreached(candidateMaker)) {
           this._detachDarkOrder(candidate.id);
-          i -= 1;
           continue;
         }
         makerOrder = candidate;
@@ -1069,7 +1051,6 @@ export class MarketEngine {
       if (filled <= 1e-9) break;
 
       makerOrder.remaining = Math.max(0, makerOrder.remaining - filled);
-      level.totalVolume = Math.max(0, level.totalVolume - filled);
       remaining = Math.max(0, remaining - filled);
       const makerEntry = maker.darkOrders.get(makerOrder.id);
       if (makerEntry) {
@@ -1100,8 +1081,8 @@ export class MarketEngine {
       });
     }
 
-    if (!level.orders.length || level.totalVolume <= 1e-9) {
-      this._darkSideMap(oppositeSide).delete(this._darkLevelKey(price));
+    if (bucket.size === 0) {
+      index.delete(key);
     }
 
     return { filled: qty - remaining, remaining, fills };
