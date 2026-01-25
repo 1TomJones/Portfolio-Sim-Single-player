@@ -69,6 +69,7 @@ function restartTickTimer() {
 
     broadcastPriceSnapshot();
     broadcastBook();
+    broadcastDarkBook();
     broadcastIcebergBook();
 
     for (const [, sock] of io.sockets.sockets) {

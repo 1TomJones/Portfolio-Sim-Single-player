@@ -8,7 +8,7 @@ export const DEFAULT_BOT_CONFIG = [
     minDecisionMs: 25,
     inventory: { maxAbs: Number.POSITIVE_INFINITY, target: 0 },
     buyProbability: 0.5,
-    aggressiveProbability: 0.8,
+    aggressiveProbability: 0.95,
     kRange: { min: 0, max: 4 },
     fairValueLink: false,
     meanReversionAlpha: 0.03,
