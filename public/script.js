@@ -157,6 +157,7 @@ function updateAssetsListValues() {
     pnlEl.textContent = formatSigned(pnlData.total);
     pnlEl.classList.toggle("positive", pnlData.total > 0);
     pnlEl.classList.toggle("negative", pnlData.total < 0);
+    row.classList.toggle("has-position", Math.abs(posData.position) > 0);
   });
   updatePortfolioSummary();
 }

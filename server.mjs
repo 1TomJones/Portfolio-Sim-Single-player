@@ -41,11 +41,35 @@ const players = new Map();
 const DEFAULT_CASH = 100000;
 let tickTimer = null;
 
-function randomStep() {
-  return Math.random() < 0.5 ? -1 : 1;
+function tickSizeForStartPrice(startPrice) {
+  if (startPrice > 500) return 1;
+  if (startPrice >= 250) return 0.5;
+  if (startPrice >= 100) return 0.25;
+  return 0.1;
 }
 
-function buildInitialCandles(startPrice) {
+function snapToTick(value, tickSize) {
+  if (!Number.isFinite(tickSize) || tickSize <= 0) return value;
+  const snapped = Math.round(value / tickSize) * tickSize;
+  return Number(snapped.toFixed(4));
+}
+
+function biasedStep(asset) {
+  const fairValue = asset.fairValue || asset.price;
+  const deviationPct = fairValue ? ((asset.price - fairValue) / fairValue) * 100 : 0;
+  const absDeviation = Math.abs(deviationPct);
+  let bias = 0;
+  if (absDeviation >= 2) {
+    bias = Math.min(0.45, 0.05 + Math.max(0, absDeviation - 2) * 0.02);
+  }
+  let upProbability = 0.5;
+  if (absDeviation >= 2) {
+    upProbability = deviationPct < 0 ? 0.5 + bias : 0.5 - bias;
+  }
+  return Math.random() < upProbability ? 1 : -1;
+}
+
+function buildInitialCandles(startPrice, tickSize) {
   let price = startPrice;
   const candles = [];
   const startTime = Math.floor(Date.now() / 1000) - MAX_CANDLES * TICKS_PER_CANDLE;
@@ -55,7 +79,7 @@ function buildInitialCandles(startPrice) {
     let high = price;
     let low = price;
     for (let t = 0; t < TICKS_PER_CANDLE; t += 1) {
-      price += randomStep();
+      price = snapToTick(price + (Math.random() < 0.5 ? -1 : 1) * tickSize, tickSize);
       high = Math.max(high, price);
       low = Math.min(low, price);
     }
@@ -67,12 +91,15 @@ function buildInitialCandles(startPrice) {
 
 function createAsset(symbol, index) {
   const seed = 90 + index * 15;
-  const initial = buildInitialCandles(seed);
+  const tickSize = tickSizeForStartPrice(seed);
+  const initial = buildInitialCandles(seed, tickSize);
   const lastTime = initial.candles[initial.candles.length - 1]?.time ?? Math.floor(Date.now() / 1000);
   return {
     id: `asset-${index + 1}`,
     symbol,
     price: initial.price,
+    fairValue: seed,
+    tickSize,
     candles: initial.candles,
     currentCandle: {
       time: lastTime + TICKS_PER_CANDLE,
@@ -207,7 +234,8 @@ function processLimitOrdersForAsset(asset) {
 function stepTick() {
   const updates = [];
   for (const asset of assets) {
-    asset.price += randomStep();
+    const direction = biasedStep(asset);
+    asset.price = snapToTick(asset.price + direction * asset.tickSize, asset.tickSize);
 
     if (!asset.currentCandle) {
       asset.currentCandle = {
@@ -308,6 +336,11 @@ io.on("connection", (socket) => {
       return;
     }
 
+    if (side === "buy" && type === "market" && qty * asset.price > player.cash) {
+      ack?.({ ok: false, reason: "insufficient-cash" });
+      return;
+    }
+
     if (type === "market") {
       fillOrder(player, {
         assetId: asset.id,
@@ -321,6 +354,11 @@ io.on("connection", (socket) => {
 
     if (!Number.isFinite(limitPrice)) {
       ack?.({ ok: false, reason: "bad-price" });
+      return;
+    }
+
+    if (side === "buy" && qty * limitPrice > player.cash) {
+      ack?.({ ok: false, reason: "insufficient-cash" });
       return;
     }
 
