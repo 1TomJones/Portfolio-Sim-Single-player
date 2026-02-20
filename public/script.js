@@ -10,8 +10,6 @@ const socket = io({
   query: { role: "player", scenario_id: scenarioId, event_code: eventCode, run_id: runId || "" },
 });
 
-const isDebugSubmissionEnabled = query.get("debug_submit") === "1";
-
 const TAB_ORDER = ["equities", "commodities", "bonds"];
 const TAB_LABELS = { equities: "Equities", commodities: "Commodities", bonds: "Bonds" };
 
@@ -23,6 +21,7 @@ const newsFeed = document.getElementById("newsFeed");
 const joinView = document.getElementById("joinView");
 const waitView = document.getElementById("waitView");
 const gameView = document.getElementById("gameView");
+const rosterList = document.getElementById("roster");
 const nameInput = document.getElementById("nameInput");
 const joinBtn = document.getElementById("joinBtn");
 const joinMsg = document.getElementById("joinMsg");
@@ -36,15 +35,9 @@ const assetsList = document.getElementById("assetsList");
 const assetTabs = document.getElementById("assetTabs");
 const assetSubheading = document.getElementById("assetSubheading");
 const orderAssetLabel = document.getElementById("orderAssetLabel");
-const resultMessage = document.getElementById("resultMessage");
-const resultActions = document.getElementById("resultActions");
-const runIdLabel = document.getElementById("runIdLabel");
-const submitTestBtn = document.getElementById("submitTestBtn");
 const buyBtn = document.getElementById("buyBtn");
 const sellBtn = document.getElementById("sellBtn");
 const quantityInput = document.getElementById("quantityInput");
-const tradeStatus = document.getElementById("tradeStatus");
-const openOrdersList = document.getElementById("openOrders");
 
 const chartContainer = document.getElementById("chart");
 let chartApi = null;
@@ -57,16 +50,12 @@ let assetMap = new Map();
 let selectedAssetId = null;
 let activeTab = "equities";
 let positions = new Map();
-let openOrders = [];
 let availableCash = 100000;
 let totalPnlValue = 0;
 let highestEquity = availableCash;
 let maxDrawdown = 0;
-let winTrades = 0;
-let totalTrades = 0;
-let hasSubmittedRun = false;
-let latestSubmissionPayload = null;
-let currentPhase = "running";
+let currentPhase = "lobby";
+let hasJoined = false;
 
 function show(node) {
   if (node) node.classList.remove("hidden");
@@ -75,7 +64,6 @@ function show(node) {
 function hide(node) {
   if (node) node.classList.add("hidden");
 }
-
 
 function showLaunchError(title, detail) {
   if (runErrorTitle) runErrorTitle.textContent = title;
@@ -105,6 +93,7 @@ function pushNewsItem(headline, tick) {
   newsFeed.prepend(item);
   while (newsFeed.children.length > 6) newsFeed.removeChild(newsFeed.lastElementChild);
 }
+
 function formatNumber(value, digits = 2) {
   if (!Number.isFinite(value)) return "—";
   return Number(value).toFixed(digits);
@@ -121,21 +110,18 @@ function formatSignedCurrency(value) {
   return `${sign}${formatCurrency(Math.abs(value))}`;
 }
 
-function setTradeStatus(message, tone = "") {
-  if (!tradeStatus) return;
-  tradeStatus.textContent = message;
-  tradeStatus.dataset.tone = tone;
-}
-
 function getPositionData(assetId) {
   return positions.get(assetId) || { position: 0, avgCost: 0, realizedPnl: 0 };
+}
+
+function hasActivePosition(assetId) {
+  return Math.abs(getPositionData(assetId).position || 0) > 0;
 }
 
 function pnlForAsset(asset) {
   const posData = getPositionData(asset.id);
   const unrealized = posData.position ? (asset.price - posData.avgCost) * posData.position : 0;
-  const realized = posData.realizedPnl || 0;
-  return realized + unrealized;
+  return (posData.realizedPnl || 0) + unrealized;
 }
 
 function updatePortfolioSummary() {
@@ -190,6 +176,18 @@ function createAssetRow(asset) {
   return row;
 }
 
+function sortAssetsWithPositionsFirst(items) {
+  return [...items]
+    .map((asset, index) => ({ asset, index }))
+    .sort((a, b) => {
+      const aPinned = hasActivePosition(a.asset.id) ? 0 : 1;
+      const bPinned = hasActivePosition(b.asset.id) ? 0 : 1;
+      if (aPinned !== bPinned) return aPinned - bPinned;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.asset);
+}
+
 function renderAssetTabs() {
   if (!assetTabs) return;
   assetTabs.innerHTML = "";
@@ -211,7 +209,7 @@ function renderAssetTabs() {
 
 function renderAssetsList() {
   assetsList.innerHTML = "";
-  const categoryAssets = assets.filter((asset) => (asset.category || "equities") === activeTab);
+  const categoryAssets = sortAssetsWithPositionsFirst(assets.filter((asset) => (asset.category || "equities") === activeTab));
 
   if (activeTab === "equities") {
     const stocks = categoryAssets.filter((asset) => asset.group !== "indices");
@@ -322,118 +320,52 @@ function updateChartForAsset(asset) {
   if (asset.candle) candleSeriesApi.update(asset.candle);
 }
 
-function buildSubmissionPayload({ useSample = false } = {}) {
-  const pnl = Number((useSample ? 789.12 : totalPnlValue).toFixed(2));
-  const score = Number((useSample ? 1234.56 : pnl).toFixed(2));
-  const winRate = Number((useSample ? 0.67 : totalTrades ? winTrades / totalTrades : 0).toFixed(4));
-  const drawdownValue = Number((useSample ? 250.34 : maxDrawdown).toFixed(2));
-  const finalValue = Number((availableCash + totalPnlValue).toFixed(2));
-
-  return {
-    runId: runId || "local-run",
-    score,
-    pnl,
-    sharpe: null,
-    max_drawdown: drawdownValue,
-    win_rate: winRate,
-    extra: {
-      eventCode,
-      scenarioId,
-      cash: availableCash,
-      total_pnl: pnl,
-      final_value: finalValue,
-      num_trades: totalTrades,
-      winning_trades: winTrades,
-      submittedAt: new Date().toISOString(),
-      mode: useSample ? "debug" : "live",
-    },
-  };
-}
-
-function clearResultActions() {
-  if (resultActions) resultActions.innerHTML = "";
-}
-
-function addResultButton(label, onClick) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "secondary";
-  button.textContent = label;
-  button.addEventListener("click", onClick);
-  resultActions?.appendChild(button);
-}
-
-function addResultLink(label, href, { disabled = false } = {}) {
-  const link = document.createElement("a");
-  link.className = "button-link";
-  link.textContent = label;
-
-  if (disabled || !href) {
-    link.href = "#";
-    link.setAttribute("aria-disabled", "true");
-    link.classList.add("disabled");
-    link.addEventListener("click", (event) => event.preventDefault());
-  } else {
-    link.href = href;
-    link.target = "_blank";
-    link.rel = "noreferrer";
-  }
-
-  resultActions?.appendChild(link);
-}
-
-function setResultMessage(message) {
-  if (resultMessage) resultMessage.textContent = message;
-}
-
-async function submitResults(payload) {
-  if (hasSubmittedRun) return;
-  latestSubmissionPayload = payload;
-  hasSubmittedRun = true;
-  setResultMessage("Simulation complete. Results are stored locally for this session.");
-  if (submitTestBtn) submitTestBtn.disabled = true;
-  clearResultActions();
-  addResultButton("Show payload", () => {
-    setResultMessage(`Result payload: ${JSON.stringify(payload)}`);
+function renderRoster(players = []) {
+  if (!rosterList) return;
+  rosterList.innerHTML = "";
+  players.forEach((player) => {
+    const item = document.createElement("li");
+    item.textContent = player.name || "Player";
+    rosterList.appendChild(item);
   });
 }
 
-function submitLiveResults() {
-  if (!runId || hasSubmittedRun) return;
-  submitResults(buildSubmissionPayload({ useSample: false }));
+function refreshViewForPhase() {
+  if (!hasJoined) {
+    show(joinView);
+    hide(waitView);
+    hide(gameView);
+    return;
+  }
+
+  if (currentPhase === "running") {
+    hide(joinView);
+    hide(waitView);
+    show(gameView);
+    return;
+  }
+
+  hide(joinView);
+  show(waitView);
+  hide(gameView);
 }
 
 function setPhase(phase) {
-  currentPhase = String(phase || "running").toLowerCase();
+  currentPhase = String(phase || "lobby").toLowerCase();
   if (phaseBadge) phaseBadge.textContent = `Phase: ${currentPhase}`;
 
   const marketOpen = currentPhase === "running";
   if (buyBtn) buyBtn.disabled = !marketOpen;
   if (sellBtn) sellBtn.disabled = !marketOpen;
-
-  if (currentPhase === "ended" || currentPhase === "finished" || currentPhase === "complete") {
-    submitLiveResults();
-  }
+  refreshViewForPhase();
 }
 
 function handleOrder(side) {
-  if (!selectedAssetId) {
-    setTradeStatus("Select an asset first.", "error");
-    return;
-  }
-  if (currentPhase !== "running") {
-    setTradeStatus("Market is paused/ended.", "error");
-    return;
-  }
+  if (!selectedAssetId) return;
+  if (currentPhase !== "running") return;
 
   const qty = Number(quantityInput.value || 0);
-  socket.emit("submitOrder", { assetId: selectedAssetId, side, qty, type: "market" }, (res) => {
-    if (!res?.ok) {
-      setTradeStatus("Order rejected.", "error");
-      return;
-    }
-    setTradeStatus("Order filled.", "success");
-  });
+  socket.emit("submitOrder", { assetId: selectedAssetId, side, qty, type: "market" });
 }
 
 socket.on("connect", () => {
@@ -490,36 +422,16 @@ socket.on("portfolio", (payload) => {
     });
   });
   if (Number.isFinite(payload?.cash)) availableCash = payload.cash;
+  renderAssetsList();
   updateAssetsListValues();
-});
-
-socket.on("execution", (payload) => {
-  const tradePnl = Number(payload?.realizedPnlDelta ?? 0);
-  totalTrades += 1;
-  if (tradePnl > 0) winTrades += 1;
-});
-
-socket.on("openOrders", (payload) => {
-  openOrders = payload?.orders || [];
-  if (!openOrdersList) return;
-  openOrdersList.innerHTML = "";
-  const scoped = openOrders.filter((order) => order.assetId === selectedAssetId);
-  if (!scoped.length) {
-    const item = document.createElement("li");
-    item.className = "empty-order";
-    item.textContent = "No open orders";
-    openOrdersList.appendChild(item);
-    return;
-  }
-  scoped.forEach((order) => {
-    const li = document.createElement("li");
-    li.textContent = `${order.side.toUpperCase()} ${order.qty} @ ${order.price}`;
-    openOrdersList.appendChild(li);
-  });
 });
 
 socket.on("news", (payload) => {
   pushNewsItem(payload?.headline, payload?.tick);
+});
+
+socket.on("roster", (payload) => {
+  renderRoster(payload?.players || []);
 });
 
 socket.on("scenarioError", (payload) => {
@@ -541,14 +453,12 @@ joinBtn?.addEventListener("click", () => {
       joinMsg.textContent = "Unable to join.";
       return;
     }
-    hide(joinView);
-    hide(waitView);
-    show(gameView);
+    hasJoined = true;
     setPhase(res.phase);
+    renderRoster(res.players || []);
+    refreshViewForPhase();
   });
 });
-
-if (runIdLabel) runIdLabel.textContent = runId ? `Run: ${runId}` : "Run: missing";
 
 async function init() {
   const scenario = await validateScenario();
@@ -557,15 +467,9 @@ async function init() {
     else scenarioLabel.textContent = "Scenario: server default";
   }
 
-  setResultMessage("Results are local to this simulation session.");
-
-  if (submitTestBtn && isDebugSubmissionEnabled) {
-    show(submitTestBtn);
-    submitTestBtn.addEventListener("click", () => submitResults(buildSubmissionPayload({ useSample: true })));
-  }
-
   socket.connect();
   updatePortfolioSummary();
+  refreshViewForPhase();
 }
 
 init();

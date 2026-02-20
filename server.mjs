@@ -37,7 +37,7 @@ const PORT = process.env.PORT || 10000;
 const DEFAULT_CASH = 100000;
 const scenariosPath = path.join(__dirname, "scenarios");
 const metadataPath = path.join(__dirname, "public", "meta", "scenarios.json");
-const fallbackScenarioId = process.env.DEFAULT_SCENARIO_ID || "global-macro";
+const fallbackScenarioId = process.env.DEFAULT_SCENARIO_ID || "default";
 
 function safeJsonRead(filePath) {
   try {
@@ -187,7 +187,7 @@ function createSimulationState(scenarioId) {
     newsCursor: 0,
     assetImpacts: {},
     tick: 0,
-    phase: "running",
+    phase: "lobby",
     eventCode: null,
     tickTimer: null,
     durationTicks,
@@ -239,7 +239,11 @@ console.log(`Loaded ${loadedScenarios.length} scenarios: ${loadedScenarios.map((
 
 function resetSimulation(scenarioId) {
   sim = createSimulationState(scenarioId);
-  startTicking();
+  io.emit("assetSnapshot", { assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, scenario: sim.scenario });
+  for (const socketId of adminSockets) {
+    const socket = io.sockets.sockets.get(socketId);
+    socket?.emit("adminAssetSnapshot", { assets: initialAdminAssetPayload(), tickMs: sim.simCfg.tickMs, scenario: sim.scenario });
+  }
 }
 
 function activateScenario(scenarioId) {
@@ -247,9 +251,23 @@ function activateScenario(scenarioId) {
   if (!requested || requested === sim.scenario?.id) return { ok: true };
   const exists = loadScenarioExact(requested);
   if (!exists) return { ok: false, reason: "not-found" };
-  if (players.size > 0) return { ok: false, reason: "locked" };
   resetSimulation(requested);
   return { ok: true };
+}
+
+function rosterPayload() {
+  return {
+    players: [...players.values()].map((player) => ({
+      id: player.id,
+      name: player.name,
+      runId: player.runId,
+      joinedAt: player.joinedAt,
+    })),
+  };
+}
+
+function broadcastRoster() {
+  io.emit("roster", rosterPayload());
 }
 
 function applyDurationOverride(durationMinutes) {
@@ -601,11 +619,13 @@ app.get("/api/scenarios", (_req, res) => {
 
 app.post("/api/admin/start", (req, res) => {
   const { scenario_id: scenarioId, duration_minutes: durationMinutes, event_code: eventCode } = req.body || {};
-  const activation = activateScenario(scenarioId);
-  if (!activation.ok) {
-    const status = activation.reason === "not-found" ? 404 : 409;
-    res.status(status).json({ ok: false, reason: activation.reason });
-    return;
+  if (scenarioId) {
+    const activation = activateScenario(scenarioId);
+    if (!activation.ok) {
+      const status = activation.reason === "not-found" ? 404 : 409;
+      res.status(status).json({ ok: false, reason: activation.reason });
+      return;
+    }
   }
 
   if (eventCode) {
@@ -616,10 +636,19 @@ app.post("/api/admin/start", (req, res) => {
   res.json({ ok: true, scenario_id: sim.scenario?.id || null, event_code: sim.eventCode, duration_ticks: sim.durationTicks });
 });
 
+app.post("/api/admin/scenario", (req, res) => {
+  const { scenario_id: scenarioId } = req.body || {};
+  const activation = activateScenario(scenarioId);
+  if (!activation.ok) {
+    const status = activation.reason === "not-found" ? 404 : 409;
+    res.status(status).json({ ok: false, reason: activation.reason });
+    return;
+  }
+  res.json({ ok: true, scenario_id: sim.scenario?.id || null, phase: sim.phase });
+});
+
 app.use((req, _res, next) => {
   if (req.method !== "GET") return next();
-  const scenarioId = String(req.query?.scenario_id || "").trim();
-  if (scenarioId) activateScenario(scenarioId);
   if (req.query?.duration_minutes) applyDurationOverride(req.query.duration_minutes);
   if (req.query?.event_code && !sim.eventCode) sim.eventCode = String(req.query.event_code);
   next();
@@ -656,14 +685,6 @@ app.post("/api/admin/phase", (req, res) => {
 
 io.on("connection", (socket) => {
   const role = socket.handshake.query?.role;
-  const requestedScenarioId = String(socket.handshake.query?.scenario_id || "").trim();
-  const scenarioActivation = activateScenario(requestedScenarioId);
-
-  if (!scenarioActivation.ok) {
-    socket.emit("scenarioError", {
-      message: scenarioActivation.reason === "not-found" ? "Scenario not found." : "Scenario is already locked for this event.",
-    });
-  }
 
   if (role === "admin") {
     adminSockets.add(socket.id);
@@ -697,7 +718,8 @@ io.on("connection", (socket) => {
       latestScore: null,
     });
 
-    ack?.({ ok: true, phase: sim.phase, assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, scenario: sim.scenario });
+    broadcastRoster();
+    ack?.({ ok: true, phase: sim.phase, assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, scenario: sim.scenario, ...rosterPayload() });
     publishPortfolio(players.get(socket.id));
   });
 
@@ -774,6 +796,7 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     adminSockets.delete(socket.id);
     players.delete(socket.id);
+    broadcastRoster();
   });
 });
 

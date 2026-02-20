@@ -1,37 +1,9 @@
 [
   {
-    "id": "demo_2min",
-    "name": "Demo Scenario (2 min)",
-    "description": "Two-minute smoke-test scenario for event wiring, news handling, fair-value drift, and automatic run completion.",
-    "duration_seconds": 120,
-    "version": 1
-  },
-  {
-    "id": "global-macro",
-    "name": "Global Macro Rotation",
-    "description": "",
-    "duration_seconds": 0,
-    "version": "1.0.0"
-  },
-  {
-    "id": "macro_15min",
-    "name": "Macro Crosswinds (15 min)",
-    "description": "15-minute multi-asset macro event with sector rotation, commodity shocks, and risk regime shifts.",
-    "duration_seconds": 900,
-    "version": 2
-  },
-  {
-    "id": "macro_rotation_15m",
-    "name": "Macro Rotation (15 min)",
-    "description": "CPI shock, rate repricing, energy spike, then relief rally. Designed for portfolio/risk discipline.",
-    "duration_seconds": 900,
-    "version": 1
-  },
-  {
-    "id": "test_2min",
-    "name": "Test (2 min)",
-    "description": "Two-minute smoke test for joins, news feed, fair value drift, and run completion.",
-    "duration_seconds": 120,
-    "version": 2
+    "id": "default",
+    "name": "Default Market Session",
+    "description": "Baseline scenario loaded by admin before start.",
+    "duration_seconds": 300,
+    "version": "2.0.0"
   }
 ]

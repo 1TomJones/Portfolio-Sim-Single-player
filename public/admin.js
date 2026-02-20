@@ -157,18 +157,12 @@ async function loadScenarios() {
 }
 
 async function startScenario() {
-  selectedScenarioId = scenarioSelect?.value || selectedScenarioId;
-  if (!selectedScenarioId) {
-    setControlStatus("Choose a scenario first.", "error");
-    return;
-  }
-
   setControlStatus("Starting scenario…");
   try {
     const response = await fetch("/api/admin/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scenario_id: selectedScenarioId }),
+      body: JSON.stringify({ scenario_id: selectedScenarioId || undefined }),
     });
 
     if (!response.ok) throw new Error(`start-failed-${response.status}`);
@@ -176,6 +170,28 @@ async function startScenario() {
     if (adminScenarioLabel) adminScenarioLabel.textContent = `Scenario: ${selectedScenarioId}`;
   } catch {
     setControlStatus("Could not start scenario.", "error");
+  }
+}
+
+async function selectScenario() {
+  selectedScenarioId = scenarioSelect?.value || selectedScenarioId;
+  if (!selectedScenarioId) {
+    setControlStatus("Choose a scenario first.", "error");
+    return;
+  }
+
+  setControlStatus("Loading scenario…");
+  try {
+    const response = await fetch("/api/admin/scenario", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scenario_id: selectedScenarioId }),
+    });
+    if (!response.ok) throw new Error(`scenario-failed-${response.status}`);
+    if (adminScenarioLabel) adminScenarioLabel.textContent = `Scenario: ${selectedScenarioId}`;
+    setControlStatus("Scenario loaded. Start when ready.", "success");
+  } catch {
+    setControlStatus("Could not load scenario.", "error");
   }
 }
 
@@ -211,6 +227,7 @@ function fetchPlayers() {
 document.getElementById("startBtn")?.addEventListener("click", () => startScenario());
 document.getElementById("pauseBtn")?.addEventListener("click", () => runControl("paused", "Pause"));
 document.getElementById("endBtn")?.addEventListener("click", () => runControl("ended", "End"));
+scenarioSelect?.addEventListener("change", () => selectScenario());
 
 socket.on("phase", setPhase);
 socket.on("adminAssetSnapshot", (payload) => {
