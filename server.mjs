@@ -106,6 +106,25 @@ function quantize(value, decimals = 2) {
   return Math.round(value * p) / p;
 }
 
+function pricePointSize(startPrice) {
+  const price = Number(startPrice || 0);
+  if (price < 100) return 0.05;
+  if (price < 200) return 0.1;
+  if (price < 500) return 0.25;
+  if (price < 1000) return 0.5;
+  if (price < 2000) return 1;
+  return 2.5;
+}
+
+function distanceTowardProbability(distanceAbsPct) {
+  if (distanceAbsPct <= 0.02) return 0.5;
+  if (distanceAbsPct <= 0.04) return 0.55;
+  if (distanceAbsPct <= 0.06) return 0.6;
+  if (distanceAbsPct <= 0.08) return 0.7;
+  if (distanceAbsPct <= 0.1) return 0.8;
+  return 0.9;
+}
+
 function resolveSimStartTimestampMs(scenario) {
   const parsed = Date.parse(scenario?.simStart);
   if (Number.isFinite(parsed)) return parsed;
@@ -142,9 +161,12 @@ function buildInitialCandles(startPrice, decimals, maxCandles, ticksPerCandle, g
 
 function createAssetState(assetDef, simCfg) {
   const decimals = Number.isFinite(assetDef.priceDecimals) ? assetDef.priceDecimals : 2;
+  const pointSize = pricePointSize(assetDef.startPrice);
+  const pointSizeDecimals = String(pointSize).includes(".") ? String(pointSize).split(".")[1].length : 0;
+  const displayDecimals = Math.max(decimals, pointSizeDecimals);
   const initial = buildInitialCandles(
     assetDef.startPrice,
-    decimals,
+    displayDecimals,
     simCfg.maxCandles,
     simCfg.ticksPerCandle,
     simCfg.gameMsPerTick,
@@ -160,11 +182,13 @@ function createAssetState(assetDef, simCfg) {
     category: assetDef.category,
     group: assetDef.group || null,
     isYield: Boolean(assetDef.isYield),
-    decimals,
+    decimals: displayDecimals,
+    pointSize,
     basePrice: assetDef.startPrice,
     factors: assetDef.factors || {},
-    price: quantize(initial.price, decimals),
-    fairValue: quantize(assetDef.startPrice, decimals),
+    correlations: assetDef.correlations || {},
+    price: quantize(initial.price, displayDecimals),
+    fairValue: quantize(assetDef.startPrice, displayDecimals),
     candles: initial.candles,
     currentCandle: {
       time: lastCandleTime + stepSeconds,
@@ -187,7 +211,7 @@ function createSimulationState(scenarioId) {
   const simCfg = {
     tickMs: Number(scenario.tickMs || 500),
     gameMsPerTick: 60 * 60 * 1000,
-    ticksPerCandle: Number(scenario.ticksPerCandle || 10),
+    ticksPerCandle: 24,
     maxCandles: Number(scenario.maxCandles || 80),
     meanReversion: Number(scenario.meanReversion || 0.12),
     baseNoise: Number(scenario.baseNoise || 0.0018),
@@ -200,7 +224,18 @@ function createSimulationState(scenarioId) {
   }, {});
 
   const durationSeconds = Number(scenario.duration_seconds || scenario.durationSeconds || 0);
-  const durationTicks = durationSeconds > 0 ? Math.ceil((durationSeconds * 1000) / simCfg.tickMs) : 0;
+  const durationTicks = durationSeconds > 0 ? Math.ceil((durationSeconds * 1000) / simCfg.tickMs) : 4320;
+
+  const correlationRules = [
+    ...(Array.isArray(scenario.correlations) ? scenario.correlations : []),
+    ...(Array.isArray(scenario.crossAssetRules) ? scenario.crossAssetRules : []),
+  ]
+    .map((rule) => ({
+      sourceAssetId: String(rule.sourceAssetId || rule.source || ""),
+      targetAssetId: String(rule.targetAssetId || rule.target || ""),
+      beta: Number(rule.beta || rule.weight || 0),
+    }))
+    .filter((rule) => rule.sourceAssetId && rule.targetAssetId && Number.isFinite(rule.beta));
 
   return {
     scenario,
@@ -219,6 +254,7 @@ function createSimulationState(scenarioId) {
     macroExpectationCursor: 0,
     releasedMacro: [],
     assetImpacts: {},
+    correlationRules,
     tick: 0,
     phase: "lobby",
     eventCode: null,
@@ -294,10 +330,10 @@ console.log(`Loaded ${loadedScenarios.length} scenarios: ${loadedScenarios.map((
 
 function resetSimulation(scenarioId) {
   sim = createSimulationState(scenarioId);
-  io.emit("assetSnapshot", { assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, simStartMs: sim.simStartMs, tick: sim.tick, scenario: sim.scenario });
+  io.emit("assetSnapshot", { assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, simStartMs: sim.simStartMs, tick: sim.tick, durationTicks: sim.durationTicks, scenario: sim.scenario });
   for (const socketId of adminSockets) {
     const socket = io.sockets.sockets.get(socketId);
-    socket?.emit("adminAssetSnapshot", { assets: initialAdminAssetPayload(), tickMs: sim.simCfg.tickMs, simStartMs: sim.simStartMs, tick: sim.tick, scenario: sim.scenario });
+    socket?.emit("adminAssetSnapshot", { assets: initialAdminAssetPayload(), tickMs: sim.simCfg.tickMs, simStartMs: sim.simStartMs, tick: sim.tick, durationTicks: sim.durationTicks, scenario: sim.scenario });
   }
 }
 
@@ -524,15 +560,40 @@ function computeFairValue(asset) {
     return acc + Number(beta) * level;
   }, 0);
   const impactPct = currentAssetImpactPct(asset.id);
-  const target = asset.basePrice * (1 + factorContribution) * (1 + impactPct);
+  const correlationContribution = sim.correlationRules.reduce((acc, rule) => {
+    if (rule.targetAssetId !== asset.id) return acc;
+    const source = sim.assets.find((candidate) => candidate.id === rule.sourceAssetId);
+    if (!source || !Number.isFinite(source.price) || !Number.isFinite(source.basePrice) || source.basePrice <= 0) return acc;
+    return acc + ((source.price - source.basePrice) / source.basePrice) * rule.beta;
+  }, 0);
+
+  const inlineCorrelationContribution = Object.entries(asset.correlations || {}).reduce((acc, [sourceAssetId, beta]) => {
+    const source = sim.assets.find((candidate) => candidate.id === sourceAssetId);
+    if (!source || !Number.isFinite(source.price) || !Number.isFinite(source.basePrice) || source.basePrice <= 0) return acc;
+    return acc + ((source.price - source.basePrice) / source.basePrice) * Number(beta || 0);
+  }, 0);
+
+  const target = asset.basePrice * (1 + factorContribution + correlationContribution + inlineCorrelationContribution) * (1 + impactPct);
   return Math.max(0.01, quantize(target, asset.decimals));
 }
 
-function computeDirectionalReturn(asset) {
+function moveAssetPriceByPoint(asset) {
   const fv = Math.max(asset.fairValue, 0.01);
   const price = Math.max(asset.price, 0.01);
-  const distancePct = (fv - price) / fv;
-  return clamp(distancePct, -0.018, 0.018);
+  const signedDistancePct = (fv - price) / fv;
+  const distanceAbsPct = Math.abs(signedDistancePct);
+  const towardProb = distanceTowardProbability(distanceAbsPct);
+  const moveToward = Math.random() < towardProb;
+
+  let direction = 0;
+  if (Math.abs(fv - price) < Number.EPSILON) {
+    direction = Math.random() < 0.5 ? 1 : -1;
+  } else {
+    const towardDirection = fv > price ? 1 : -1;
+    direction = moveToward ? towardDirection : -towardDirection;
+  }
+
+  return quantize(Math.max(0.01, price + direction * asset.pointSize), asset.decimals);
 }
 
 function stepTick() {
@@ -547,10 +608,7 @@ function stepTick() {
 
   for (const asset of sim.assets) {
     asset.fairValue = computeFairValue(asset);
-
-    const directionalReturn = computeDirectionalReturn(asset);
-    const nextReturn = directionalReturn;
-    asset.price = quantize(Math.max(0.01, asset.price * (1 + nextReturn)), asset.decimals);
+    asset.price = moveAssetPriceByPoint(asset);
 
     if (!asset.currentCandle) {
       asset.currentCandle = {
@@ -572,9 +630,6 @@ function stepTick() {
     if (asset.ticksInCandle >= sim.simCfg.ticksPerCandle) {
       completedCandle = asset.currentCandle;
       asset.candles.push(completedCandle);
-      if (asset.candles.length > sim.simCfg.maxCandles) {
-        asset.candles.shift();
-      }
       asset.nextCandleTime += candleStepSeconds(sim.simCfg);
       asset.currentCandle = null;
       asset.ticksInCandle = 0;
@@ -601,7 +656,7 @@ function stepTick() {
 
   decayAssetImpacts();
 
-  io.emit("assetTick", { assets: updates, tick: sim.tick });
+  io.emit("assetTick", { assets: updates, tick: sim.tick, durationTicks: sim.durationTicks });
   io.emit("macroEvents", macroPayload());
 
   if (sim.durationTicks > 0 && sim.tick >= sim.durationTicks) {
@@ -610,7 +665,7 @@ function stepTick() {
 
   for (const socketId of adminSockets) {
     const socket = io.sockets.sockets.get(socketId);
-    socket?.emit("adminAssetTick", { assets: adminUpdates, tick: sim.tick, scenario: sim.scenario });
+    socket?.emit("adminAssetTick", { assets: adminUpdates, tick: sim.tick, durationTicks: sim.durationTicks, scenario: sim.scenario });
   }
 }
 
@@ -755,11 +810,11 @@ io.on("connection", (socket) => {
   if (role === "admin") {
     adminSockets.add(socket.id);
     socket.emit("phase", sim.phase);
-    socket.emit("adminAssetSnapshot", { assets: initialAdminAssetPayload(), tickMs: sim.simCfg.tickMs, simStartMs: sim.simStartMs, tick: sim.tick, scenario: sim.scenario });
+    socket.emit("adminAssetSnapshot", { assets: initialAdminAssetPayload(), tickMs: sim.simCfg.tickMs, simStartMs: sim.simStartMs, tick: sim.tick, durationTicks: sim.durationTicks, scenario: sim.scenario });
     socket.emit("macroEvents", macroPayload());
   } else {
     socket.emit("phase", sim.phase);
-    socket.emit("assetSnapshot", { assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, simStartMs: sim.simStartMs, tick: sim.tick, scenario: sim.scenario });
+    socket.emit("assetSnapshot", { assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, simStartMs: sim.simStartMs, tick: sim.tick, durationTicks: sim.durationTicks, scenario: sim.scenario });
     socket.emit("macroEvents", macroPayload());
   }
 
@@ -787,7 +842,7 @@ io.on("connection", (socket) => {
     });
 
     broadcastRoster();
-    ack?.({ ok: true, phase: sim.phase, assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, scenario: sim.scenario, ...rosterPayload() });
+    ack?.({ ok: true, phase: sim.phase, assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, durationTicks: sim.durationTicks, scenario: sim.scenario, ...rosterPayload() });
     socket.emit("macroEvents", macroPayload());
     publishPortfolio(players.get(socket.id));
   });

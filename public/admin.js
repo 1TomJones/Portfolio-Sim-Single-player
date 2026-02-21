@@ -5,6 +5,7 @@ const TAB_ORDER = ["equities", "commodities", "bonds"];
 const TAB_LABELS = { equities: "Equities", commodities: "Commodities", bonds: "Bonds" };
 
 const phaseBadge = document.getElementById("adminPhaseBadge");
+const tickBadge = document.getElementById("adminTickBadge");
 const playersTbody = document.getElementById("playersTbody");
 const controlStatus = document.getElementById("controlStatus");
 const assetTabs = document.getElementById("adminAssetTabs");
@@ -21,6 +22,8 @@ let chartApi = null;
 let priceSeries = null;
 let fairSeries = null;
 let selectedScenarioId = "";
+let currentTick = 0;
+let durationTicks = 4320;
 
 const socket = io({ transports: ["websocket", "polling"], query: { role: "admin" } });
 
@@ -37,6 +40,11 @@ function setControlStatus(text, tone = "") {
 
 function setPhase(phase) {
   if (phaseBadge) phaseBadge.textContent = `Phase: ${phase}`;
+}
+
+function updateTickBadge() {
+  if (!tickBadge) return;
+  tickBadge.textContent = `Tick: ${currentTick} / ${durationTicks}`;
 }
 
 function ensureChart() {
@@ -231,6 +239,9 @@ scenarioSelect?.addEventListener("change", () => selectScenario());
 
 socket.on("phase", setPhase);
 socket.on("adminAssetSnapshot", (payload) => {
+  currentTick = Number(payload?.tick || currentTick);
+  durationTicks = Number(payload?.durationTicks || durationTicks);
+  updateTickBadge();
   if (payload?.scenario && adminScenarioLabel) {
     adminScenarioLabel.textContent = `Scenario: ${payload.scenario.name || payload.scenario.id} (${payload.scenario.id || ""})`;
     if (scenarioSelect && payload.scenario.id) scenarioSelect.value = payload.scenario.id;
@@ -243,6 +254,9 @@ socket.on("adminAssetSnapshot", (payload) => {
 });
 
 socket.on("adminAssetTick", (payload) => {
+  currentTick = Number(payload?.tick || currentTick);
+  durationTicks = Number(payload?.durationTicks || durationTicks);
+  updateTickBadge();
   (payload.assets || []).forEach((update) => {
     const asset = assetMap.get(update.id);
     if (!asset) return;
@@ -252,7 +266,6 @@ socket.on("adminAssetTick", (payload) => {
     asset.completedCandle = update.completedCandle;
     if (update.completedCandle) {
       asset.candles.push(update.completedCandle);
-      if (asset.candles.length > 80) asset.candles.shift();
     }
     updateChartAsset(asset);
   });
@@ -263,5 +276,6 @@ socket.on("scenarioError", (payload) => {
   setControlStatus(payload?.message || "Scenario not found.", "error");
 });
 
-await loadScenarios();
+updateTickBadge();
+loadScenarios();
 fetchPlayers();
