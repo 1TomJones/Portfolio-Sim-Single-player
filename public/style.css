@@ -113,10 +113,10 @@ button:disabled{opacity:.6;cursor:not-allowed}
 .game-shell{flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,0.32fr);gap:0;align-items:stretch;min-height:0;height:100%}
 .left-col{display:flex;flex-direction:column;gap:0;min-width:0;min-height:0;height:100%}
 .right-col{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%}
-.market-layout{display:grid;grid-template-columns:minmax(220px,0.5625fr) minmax(0,0.8875fr);grid-template-rows:minmax(0,1fr) 300px;gap:0;align-items:stretch;flex:1 1 auto;min-height:0}
+.market-layout{display:grid;grid-template-columns:minmax(220px,0.5625fr) minmax(0,0.8875fr);grid-template-rows:minmax(360px,1.35fr) minmax(220px,0.85fr);gap:0;align-items:stretch;flex:1 1 auto;min-height:0}
 .market-layout .assets-card{grid-column:1;grid-row:1;min-height:0;margin-left:-20px}
 .market-layout .market-chart-card{grid-column:2;grid-row:1;min-height:0}
-.market-layout .insight-stack{grid-column:1 / -1;grid-row:2;display:grid;grid-template-columns:minmax(220px,0.5625fr) minmax(0,0.8875fr) minmax(0,0.8875fr);gap:0;min-height:300px;max-height:300px}
+.market-layout .insight-stack{grid-column:1 / -1;grid-row:2;display:grid;grid-template-columns:minmax(220px,0.5625fr) minmax(0,0.8875fr) minmax(0,0.8875fr);gap:0;min-height:220px;max-height:280px}
 .side-widget{min-width:0;min-height:0;display:flex;flex-direction:column;gap:6px}
 .side-widget-body{display:flex;flex-direction:column;gap:12px;flex:1}
 .side-widget-item{display:flex;flex-direction:column;gap:4px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:4px;padding:8px 10px}
