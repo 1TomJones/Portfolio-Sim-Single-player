@@ -81,7 +81,7 @@ let knownMacroReleaseIds = new Set();
 let currentTick = 0;
 let simStartMs = null;
 let tickMs = 500;
-const GAME_MS_PER_TICK = 60 * 60 * 1000;
+const GAME_MS_PER_TICK = 12 * 60 * 1000;
 
 
 function formatGameTime(gameTimeMs) {
@@ -169,7 +169,7 @@ function renderMacroEvents({ scrollToTop = false } = {}) {
     item.className = "macro-item";
 
     const isActualReleased = Number(currentTick) >= Number(event.actualTick);
-    const flashWindow = !isActualReleased && Number(event.actualTick) - Number(currentTick) <= 10 && Number(event.actualTick) - Number(currentTick) >= 0;
+    const flashWindow = !isActualReleased && Number(event.actualTick) - Number(currentTick) <= 50 && Number(event.actualTick) - Number(currentTick) >= 0;
     if (flashWindow) item.classList.add("flash-alert");
 
     const actualTimeLabel = formatGameTime(gameTimeForTick(event.actualTick));

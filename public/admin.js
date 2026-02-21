@@ -23,7 +23,7 @@ let priceSeries = null;
 let fairSeries = null;
 let selectedScenarioId = "";
 let currentTick = 0;
-let durationTicks = 4320;
+let durationTicks = 21600;
 
 const socket = io({ transports: ["websocket", "polling"], query: { role: "admin" } });
 
