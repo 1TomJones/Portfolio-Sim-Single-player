@@ -192,6 +192,7 @@ function createAssetState(assetDef, simCfg) {
     price: quantize(initial.price, displayDecimals),
     fairValue: quantize(assetDef.startPrice, displayDecimals),
     candles: initial.candles,
+    fairPoints: initial.candles.map((candle) => ({ time: candle.time, value: candle.close })),
     currentCandle: {
       time: lastCandleTime + stepSeconds,
       open: initial.price,
@@ -648,6 +649,8 @@ function stepTick() {
     if (asset.ticksInCandle >= sim.simCfg.ticksPerCandle) {
       completedCandle = asset.currentCandle;
       asset.candles.push(completedCandle);
+      asset.fairPoints.push({ time: completedCandle.time, value: asset.fairValue });
+      if (asset.fairPoints.length > sim.simCfg.maxCandles) asset.fairPoints.shift();
       asset.nextCandleTime += candleStepSeconds(sim.simCfg);
       asset.currentCandle = null;
       asset.ticksInCandle = 0;
@@ -669,7 +672,12 @@ function stepTick() {
     };
 
     updates.push(shared);
-    adminUpdates.push({ ...shared, fairValue: asset.fairValue });
+    adminUpdates.push({
+      ...shared,
+      fairValue: asset.fairValue,
+      fairPoint: asset.currentCandle ? { time: asset.currentCandle.time, value: asset.fairValue } : null,
+      completedFairPoint: completedCandle ? { time: completedCandle.time, value: asset.fairValue } : null,
+    });
   }
 
   decayAssetImpacts();
@@ -714,10 +722,15 @@ function initialAssetPayload() {
 
 function initialAdminAssetPayload() {
   const base = initialAssetPayload();
-  return base.map((item) => ({
-    ...item,
-    fairValue: sim.assets.find((asset) => asset.id === item.id)?.fairValue ?? item.price,
-  }));
+  return base.map((item) => {
+    const state = sim.assets.find((asset) => asset.id === item.id);
+    return {
+      ...item,
+      fairValue: state?.fairValue ?? item.price,
+      fairPoints: [...(state?.fairPoints || [])],
+      fairPoint: state?.currentCandle ? { time: state.currentCandle.time, value: state.fairValue } : null,
+    };
+  });
 }
 
 
