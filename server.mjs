@@ -34,7 +34,7 @@ app.get("/app-config.js", (_req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-const DEFAULT_CASH = 100000;
+const DEFAULT_CASH = 10000000;
 const scenariosPath = path.join(__dirname, "scenarios");
 const metadataPath = path.join(__dirname, "public", "meta", "scenarios.json");
 const fallbackScenarioId = process.env.DEFAULT_SCENARIO_ID || "default";

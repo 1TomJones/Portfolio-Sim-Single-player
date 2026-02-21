@@ -14,14 +14,17 @@ const selectedAssetLabel = document.getElementById("selectedAssetLabel");
 const adminScenarioLabel = document.getElementById("adminScenarioLabel");
 const scenarioSelect = document.getElementById("scenarioSelect");
 const adminNewsFeed = document.getElementById("adminNewsFeed");
+const adminChartEl = document.getElementById("adminChart");
 
 let activeTab = "equities";
 let selectedAssetId = null;
 let assets = [];
 let assetMap = new Map();
+let assetRowMap = new Map();
 let chartApi = null;
-let priceSeries = null;
+let candleSeries = null;
 let fairSeries = null;
+let chartResizeObserver = null;
 let selectedScenarioId = "";
 let currentTick = 0;
 let durationTicks = 21600;
@@ -49,7 +52,6 @@ function updateTickBadge() {
   if (!tickBadge) return;
   tickBadge.textContent = `Tick: ${currentTick} / ${durationTicks}`;
 }
-
 
 function asNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -162,17 +164,32 @@ async function loadScenarioNewsTimeline(scenarioId) {
 }
 
 function ensureChart() {
-  if (chartApi) return;
-  const el = document.getElementById("adminChart");
-  chartApi = LightweightCharts.createChart(el, {
+  if (chartApi || !adminChartEl) return;
+  chartApi = LightweightCharts.createChart(adminChartEl, {
     layout: { background: { color: "#0d1423" }, textColor: "#e7efff" },
     grid: { vertLines: { color: "#1b2b45" }, horzLines: { color: "#1b2b45" } },
-    rightPriceScale: { borderColor: "#1b2b45" },
+    rightPriceScale: {
+      borderColor: "#1b2b45",
+      autoScale: true,
+      scaleMargins: { top: 0.12, bottom: 0.12 },
+    },
     timeScale: { borderColor: "#1b2b45", timeVisible: true },
   });
 
-  priceSeries = chartApi.addLineSeries({ color: "#6da8ff", lineWidth: 2, title: "Price" });
+  candleSeries = chartApi.addCandlestickSeries({
+    upColor: "#2ecc71",
+    downColor: "#ff5c5c",
+    borderUpColor: "#2ecc71",
+    borderDownColor: "#ff5c5c",
+    wickUpColor: "#2ecc71",
+    wickDownColor: "#ff5c5c",
+  });
   fairSeries = chartApi.addLineSeries({ color: "#ffd84d", lineWidth: 2, title: "Fair Value" });
+
+  chartResizeObserver = new ResizeObserver(() => {
+    chartApi?.applyOptions({ width: adminChartEl.clientWidth, height: adminChartEl.clientHeight });
+  });
+  chartResizeObserver.observe(adminChartEl);
 }
 
 function renderTabs() {
@@ -192,9 +209,30 @@ function renderTabs() {
   });
 }
 
+function updateAssetRowDisplay(asset) {
+  const row = assetRowMap.get(asset.id);
+  if (!row) return;
+  row.querySelector(".asset-price").textContent = fmt(asset.price, asset.isYield ? 3 : 2);
+  row.querySelector(".asset-pnl").textContent = fmt(asset.fairValue, asset.isYield ? 3 : 2);
+  row.classList.toggle("active", asset.id === selectedAssetId);
+}
+
 function renderAssets() {
   assetsList.innerHTML = "";
+  assetRowMap = new Map();
   const inTab = assets.filter((asset) => (asset.category || "equities") === activeTab);
+
+  const appendAsset = (asset) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "asset-row";
+    row.dataset.asset = asset.id;
+    row.innerHTML = `<span class="asset-symbol">${asset.symbol}</span><span class="asset-price">${fmt(asset.price, asset.isYield ? 3 : 2)}</span><span class="asset-position">FV</span><span class="asset-pnl">${fmt(asset.fairValue, asset.isYield ? 3 : 2)}</span>`;
+    row.addEventListener("click", () => selectAsset(asset.id));
+    assetRowMap.set(asset.id, row);
+    row.classList.toggle("active", asset.id === selectedAssetId);
+    assetsList.appendChild(row);
+  };
 
   if (activeTab === "equities") {
     const groups = [
@@ -207,22 +245,36 @@ function renderAssets() {
       heading.className = "asset-subsection";
       heading.textContent = group.title;
       assetsList.appendChild(heading);
-      group.items.forEach((asset) => assetsList.appendChild(assetRow(asset)));
+      group.items.forEach((asset) => appendAsset(asset));
     });
+    return;
+  }
+
+  inTab.forEach((asset) => appendAsset(asset));
+}
+
+function upsertFairPoint(asset, candleTime) {
+  if (!Array.isArray(asset.fairPoints)) asset.fairPoints = [];
+  const last = asset.fairPoints[asset.fairPoints.length - 1];
+  const point = { time: candleTime, value: asset.fairValue };
+  if (last && last.time === candleTime) {
+    asset.fairPoints[asset.fairPoints.length - 1] = point;
   } else {
-    inTab.forEach((asset) => assetsList.appendChild(assetRow(asset)));
+    asset.fairPoints.push(point);
   }
 }
 
-function assetRow(asset) {
-  const row = document.createElement("button");
-  row.type = "button";
-  row.className = "asset-row";
-  row.dataset.asset = asset.id;
-  row.classList.toggle("active", asset.id === selectedAssetId);
-  row.innerHTML = `<span class="asset-symbol">${asset.symbol}</span><span class="asset-price">${fmt(asset.price, asset.isYield ? 3 : 2)}</span><span class="asset-position">FV</span><span class="asset-pnl">${fmt(asset.fairValue, asset.isYield ? 3 : 2)}</span>`;
-  row.addEventListener("click", () => selectAsset(asset.id));
-  return row;
+function setChartDataForAsset(asset) {
+  if (!candleSeries || !fairSeries) return;
+  const candles = [...(asset.candles || [])];
+  if (asset.candle) candles.push(asset.candle);
+  candleSeries.setData(candles);
+
+  if (!Array.isArray(asset.fairPoints) || !asset.fairPoints.length) {
+    asset.fairPoints = candles.map((c) => ({ time: c.time, value: asset.fairValue }));
+  }
+  fairSeries.setData(asset.fairPoints);
+  chartApi?.timeScale().fitContent();
 }
 
 function selectAsset(assetId) {
@@ -234,21 +286,19 @@ function selectAsset(assetId) {
   renderTabs();
   renderAssets();
   ensureChart();
-
-  const candles = [...(asset.candles || [])];
-  if (asset.candle) candles.push(asset.candle);
-  priceSeries.setData(candles.map((c) => ({ time: c.time, value: c.close })));
-  fairSeries.setData(candles.map((c) => ({ time: c.time, value: asset.fairValue })));
+  setChartDataForAsset(asset);
 }
 
 function updateChartAsset(asset) {
-  if (!priceSeries || selectedAssetId !== asset.id) return;
+  if (!candleSeries || !fairSeries || selectedAssetId !== asset.id) return;
   if (asset.completedCandle) {
-    priceSeries.update({ time: asset.completedCandle.time, value: asset.completedCandle.close });
+    candleSeries.update(asset.completedCandle);
+    upsertFairPoint(asset, asset.completedCandle.time);
     fairSeries.update({ time: asset.completedCandle.time, value: asset.fairValue });
   }
   if (asset.candle) {
-    priceSeries.update({ time: asset.candle.time, value: asset.candle.close });
+    candleSeries.update(asset.candle);
+    upsertFairPoint(asset, asset.candle.time);
     fairSeries.update({ time: asset.candle.time, value: asset.fairValue });
   }
 }
@@ -363,11 +413,19 @@ socket.on("adminAssetSnapshot", (payload) => {
     adminScenarioLabel.textContent = `Scenario: ${payload.scenario.name || payload.scenario.id} (${payload.scenario.id || ""})`;
     if (scenarioSelect && payload.scenario.id) scenarioSelect.value = payload.scenario.id;
   }
-  assets = payload.assets || [];
+
+  assets = (payload.assets || []).map((asset) => ({
+    ...asset,
+    fairPoints: [...(asset.candles || []).map((c) => ({ time: c.time, value: asset.fairValue }))],
+  }));
   assetMap = new Map(assets.map((asset) => [asset.id, asset]));
   renderTabs();
   renderAssets();
   if (!selectedAssetId && assets.length) selectAsset(assets[0].id);
+  if (selectedAssetId) {
+    const selected = assetMap.get(selectedAssetId);
+    if (selected) setChartDataForAsset(selected);
+  }
 });
 
 socket.on("adminAssetTick", (payload) => {
@@ -375,6 +433,7 @@ socket.on("adminAssetTick", (payload) => {
   durationTicks = Number(payload?.durationTicks || durationTicks);
   updateTickBadge();
   renderAdminNewsTimeline();
+
   (payload.assets || []).forEach((update) => {
     const asset = assetMap.get(update.id);
     if (!asset) return;
@@ -384,16 +443,17 @@ socket.on("adminAssetTick", (payload) => {
     asset.completedCandle = update.completedCandle;
     if (update.completedCandle) {
       asset.candles.push(update.completedCandle);
+      upsertFairPoint(asset, update.completedCandle.time);
     }
+    if (update.candle) upsertFairPoint(asset, update.candle.time);
+    updateAssetRowDisplay(asset);
     updateChartAsset(asset);
   });
-  renderAssets();
 });
 
 socket.on("scenarioError", (payload) => {
   setControlStatus(payload?.message || "Scenario not found.", "error");
 });
-
 
 socket.on("macroEvents", (payload) => {
   currentTick = Number(payload?.tick || currentTick);

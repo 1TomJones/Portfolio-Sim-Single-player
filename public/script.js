@@ -70,7 +70,7 @@ let assetMap = new Map();
 let selectedAssetId = null;
 let activeTab = "equities";
 let positions = new Map();
-let availableCash = 100000;
+let availableCash = 10000000;
 let totalPnlValue = 0;
 let highestEquity = availableCash;
 let maxDrawdown = 0;
@@ -169,8 +169,10 @@ function renderMacroEvents({ scrollToTop = false } = {}) {
     item.className = "macro-item";
 
     const isActualReleased = Number(currentTick) >= Number(event.actualTick);
-    const flashWindow = !isActualReleased && Number(event.actualTick) - Number(currentTick) <= 50 && Number(event.actualTick) - Number(currentTick) >= 0;
-    if (flashWindow) item.classList.add("flash-alert");
+    const ticksToActual = Number(event.actualTick) - Number(currentTick);
+    const flashWindow = !isActualReleased && ticksToActual <= 50 && ticksToActual >= 0;
+    const shouldFlashThisTick = Number(currentTick) % 5 === 0;
+    if (flashWindow && shouldFlashThisTick) item.classList.add("flash-alert");
 
     const actualTimeLabel = formatGameTime(gameTimeForTick(event.actualTick));
     const expectedTimeLabel = formatGameTime(gameTimeForTick(event.expectationTick));
