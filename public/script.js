@@ -47,6 +47,13 @@ let candleSeriesApi = null;
 let avgPriceLineCandle = null;
 let chartResizeObserver = null;
 
+function refitChartViewport() {
+  if (!chartApi || !candleSeriesApi) return;
+  chartApi.timeScale().fitContent();
+  chartApi.timeScale().scrollToRealTime();
+  chartApi.priceScale("right").applyOptions({ autoScale: true });
+}
+
 let assets = [];
 let assetMap = new Map();
 let selectedAssetId = null;
@@ -340,7 +347,11 @@ function ensureChart() {
     layout: { background: { color: "#0d1423" }, textColor: "#e7efff" },
     grid: { vertLines: { color: "#1b2b45" }, horzLines: { color: "#1b2b45" } },
     timeScale: { borderColor: "#1b2b45", timeVisible: true },
-    rightPriceScale: { borderColor: "#1b2b45" },
+    rightPriceScale: {
+      borderColor: "#1b2b45",
+      autoScale: true,
+      scaleMargins: { top: 0.12, bottom: 0.12 },
+    },
   });
 
   candleSeriesApi = chartApi.addCandlestickSeries({
@@ -390,10 +401,7 @@ function selectAsset(assetId) {
   const candleData = [...(asset.candles || [])];
   if (asset.candle) candleData.push(asset.candle);
   candleSeriesApi?.setData(candleData);
-  if (chartApi) {
-    chartApi.timeScale().fitContent();
-    chartApi.timeScale().scrollToRealTime();
-  }
+  refitChartViewport();
   updateAverageLine(asset);
 }
 
@@ -401,6 +409,7 @@ function updateChartForAsset(asset) {
   if (!candleSeriesApi || selectedAssetId !== asset.id) return;
   if (asset.completedCandle) candleSeriesApi.update(asset.completedCandle);
   if (asset.candle) candleSeriesApi.update(asset.candle);
+  refitChartViewport();
 }
 
 function renderRoster(players = []) {
