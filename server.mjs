@@ -209,9 +209,9 @@ function createSimulationState(scenarioId) {
   }
 
   const simCfg = {
-    tickMs: Number(scenario.tickMs || 500),
-    gameMsPerTick: 60 * 60 * 1000,
-    ticksPerCandle: 24,
+    tickMs: Number(scenario.tickMs || 100),
+    gameMsPerTick: 12 * 60 * 1000,
+    ticksPerCandle: Number(scenario.ticksPerCandle || 60),
     maxCandles: Number(scenario.maxCandles || 80),
     meanReversion: Number(scenario.meanReversion || 0.12),
     baseNoise: Number(scenario.baseNoise || 0.0018),
@@ -224,7 +224,7 @@ function createSimulationState(scenarioId) {
   }, {});
 
   const durationSeconds = Number(scenario.duration_seconds || scenario.durationSeconds || 0);
-  const durationTicks = durationSeconds > 0 ? Math.ceil((durationSeconds * 1000) / simCfg.tickMs) : 4320;
+  const durationTicks = durationSeconds > 0 ? Math.ceil((durationSeconds * 1000) / simCfg.tickMs) : 21600;
 
   const correlationRules = [
     ...(Array.isArray(scenario.correlations) ? scenario.correlations : []),
