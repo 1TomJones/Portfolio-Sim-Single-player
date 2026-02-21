@@ -112,13 +112,20 @@ function resolveSimStartTimestampMs(scenario) {
   return Date.now();
 }
 
-function buildInitialCandles(startPrice, decimals, maxCandles, ticksPerCandle, tickMs, simStartMs) {
+function candleStepSeconds(simCfgOrTicksPerCandle, maybeGameMsPerTick) {
+  if (typeof simCfgOrTicksPerCandle === "object") {
+    return Math.max(1, Math.round((simCfgOrTicksPerCandle.ticksPerCandle * simCfgOrTicksPerCandle.gameMsPerTick) / 1000));
+  }
+  return Math.max(1, Math.round((simCfgOrTicksPerCandle * maybeGameMsPerTick) / 1000));
+}
+
+function buildInitialCandles(startPrice, decimals, maxCandles, ticksPerCandle, gameMsPerTick, simStartMs) {
   const candles = [];
   let price = startPrice;
-  const candleStepSeconds = Math.max(1, Math.round((ticksPerCandle * tickMs) / 1000));
-  const startTime = Math.floor((simStartMs - maxCandles * ticksPerCandle * tickMs) / 1000);
+  const stepSeconds = candleStepSeconds(ticksPerCandle, gameMsPerTick);
+  const startTime = Math.floor((simStartMs - maxCandles * ticksPerCandle * gameMsPerTick) / 1000);
   for (let i = 0; i < maxCandles; i += 1) {
-    const time = startTime + i * candleStepSeconds;
+    const time = startTime + i * stepSeconds;
     let open = price;
     let high = price;
     let low = price;
@@ -140,11 +147,11 @@ function createAssetState(assetDef, simCfg) {
     decimals,
     simCfg.maxCandles,
     simCfg.ticksPerCandle,
-    simCfg.tickMs,
+    simCfg.gameMsPerTick,
     simCfg.simStartMs,
   );
   const lastCandleTime = initial.candles[initial.candles.length - 1]?.time ?? Math.floor(simCfg.simStartMs / 1000);
-  const candleStepSeconds = Math.max(1, Math.round((simCfg.ticksPerCandle * simCfg.tickMs) / 1000));
+  const stepSeconds = candleStepSeconds(simCfg);
 
   return {
     id: assetDef.id,
@@ -160,14 +167,14 @@ function createAssetState(assetDef, simCfg) {
     fairValue: quantize(assetDef.startPrice, decimals),
     candles: initial.candles,
     currentCandle: {
-      time: lastCandleTime + candleStepSeconds,
+      time: lastCandleTime + stepSeconds,
       open: initial.price,
       high: initial.price,
       low: initial.price,
       close: initial.price,
     },
     ticksInCandle: 0,
-    nextCandleTime: lastCandleTime + candleStepSeconds,
+    nextCandleTime: lastCandleTime + stepSeconds,
   };
 }
 
@@ -568,7 +575,7 @@ function stepTick() {
       if (asset.candles.length > sim.simCfg.maxCandles) {
         asset.candles.shift();
       }
-      asset.nextCandleTime += Math.max(1, Math.round((sim.simCfg.ticksPerCandle * sim.simCfg.tickMs) / 1000));
+      asset.nextCandleTime += candleStepSeconds(sim.simCfg);
       asset.currentCandle = null;
       asset.ticksInCandle = 0;
     }

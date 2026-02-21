@@ -77,6 +77,7 @@ let maxDrawdown = 0;
 let currentPhase = "lobby";
 let hasJoined = false;
 let macroEvents = [];
+let knownMacroReleaseIds = new Set();
 let currentTick = 0;
 let simStartMs = null;
 let tickMs = 500;
@@ -145,7 +146,7 @@ function pushNewsItem(headline, gameTimeMs, category = "general") {
   newsFeed.prepend(item);
 }
 
-function renderMacroEvents() {
+function renderMacroEvents({ scrollToTop = false } = {}) {
   if (!macroFeed) return;
   macroFeed.innerHTML = "";
 
@@ -180,6 +181,7 @@ function renderMacroEvents() {
     macroFeed.appendChild(item);
   });
 
+  if (scrollToTop) macroFeed.scrollTop = 0;
 }
 
 function formatNumber(value, digits = 2) {
@@ -549,8 +551,13 @@ socket.on("macroEvents", (payload) => {
   currentTick = Number(payload?.tick || 0);
   if (Number.isFinite(payload?.gameTimeMs)) updateGameDateDisplay(Number(payload.gameTimeMs));
   else updateGameDateDisplay();
+
   macroEvents = Array.isArray(payload?.events) ? payload.events : [];
-  renderMacroEvents();
+  const incomingIds = new Set(macroEvents.map((event) => event.id).filter(Boolean));
+  const hasNewRelease = [...incomingIds].some((id) => !knownMacroReleaseIds.has(id));
+  knownMacroReleaseIds = incomingIds;
+
+  renderMacroEvents({ scrollToTop: hasNewRelease });
 });
 
 socket.on("roster", (payload) => {
