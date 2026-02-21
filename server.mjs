@@ -35,6 +35,7 @@ app.get("/app-config.js", (_req, res) => {
 
 const PORT = process.env.PORT || 10000;
 const DEFAULT_CASH = 10000000;
+const SHORTABLE_ASSET_IDS = new Set(["cmd-brent", "cmd-wti"]);
 const scenariosPath = path.join(__dirname, "scenarios");
 const metadataPath = path.join(__dirname, "public", "meta", "scenarios.json");
 const fallbackScenarioId = process.env.DEFAULT_SCENARIO_ID || "default";
@@ -398,6 +399,18 @@ function ensurePosition(player, assetId) {
   return player.positions[assetId];
 }
 
+function canShortAsset(asset) {
+  return sim.scenario?.id === "macro-six-month" && SHORTABLE_ASSET_IDS.has(asset?.id);
+}
+
+function buyCashRequirement(player, assetId, qty, price) {
+  const signedQty = Math.max(0, Number(qty || 0));
+  const unitPrice = Math.max(0, Number(price || 0));
+  const currentPosition = Number(ensurePosition(player, assetId).position || 0);
+  const shortCoverQty = Math.min(signedQty, Math.max(0, -currentPosition));
+  return Math.max(0, signedQty - shortCoverQty) * unitPrice;
+}
+
 function computePositionPnl(positionData, assetPrice) {
   const unrealized = positionData.position ? (assetPrice - positionData.avgCost) * positionData.position : 0;
   return positionData.realizedPnl + unrealized;
@@ -448,9 +461,10 @@ function applyFillToPosition(positionData, qtySigned, price) {
 function fillOrder(player, order, asset) {
   const positionData = ensurePosition(player, order.assetId);
   const requestedQty = Math.abs(Number(order.qty || 0));
+  const shortable = canShortAsset(asset);
   let effectiveQty = requestedQty;
 
-  if (order.side === "sell") {
+  if (order.side === "sell" && !shortable) {
     effectiveQty = Math.min(effectiveQty, Math.max(0, Number(positionData.position || 0)));
   }
 
@@ -926,12 +940,13 @@ io.on("connection", (socket) => {
     }
 
     if (type === "market") {
-      if (side === "buy" && qty * asset.price > player.cash) {
+      if (side === "buy" && buyCashRequirement(player, asset.id, qty, asset.price) > player.cash) {
         ack?.({ ok: false, reason: "insufficient-cash" });
         return;
       }
+      const shortable = canShortAsset(asset);
       const owned = Math.max(0, Number(ensurePosition(player, asset.id).position || 0));
-      const effectiveQty = side === "sell" ? Math.min(qty, owned) : qty;
+      const effectiveQty = side === "sell" && !shortable ? Math.min(qty, owned) : qty;
       if (side === "sell" && effectiveQty <= 0) {
         ack?.({ ok: true, filled: false, qty: 0 });
         return;
@@ -946,13 +961,14 @@ io.on("connection", (socket) => {
       return;
     }
 
-    if (side === "buy" && qty * limitPrice > player.cash) {
+    if (side === "buy" && buyCashRequirement(player, asset.id, qty, limitPrice) > player.cash) {
       ack?.({ ok: false, reason: "insufficient-cash" });
       return;
     }
 
+    const shortable = canShortAsset(asset);
     const owned = Math.max(0, Number(ensurePosition(player, asset.id).position || 0));
-    const effectiveQty = side === "sell" ? Math.min(qty, owned) : qty;
+    const effectiveQty = side === "sell" && !shortable ? Math.min(qty, owned) : qty;
     if (side === "sell" && effectiveQty <= 0) {
       ack?.({ ok: true, filled: false, qty: 0 });
       return;
