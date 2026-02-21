@@ -521,7 +521,6 @@ socket.on("assetTick", (payload) => {
     asset.completedCandle = update.completedCandle;
     if (update.completedCandle) {
       asset.candles.push(update.completedCandle);
-      if (asset.candles.length > 80) asset.candles.shift();
     }
     updateChartForAsset(asset);
   });

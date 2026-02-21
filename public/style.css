@@ -17,6 +17,8 @@ body.admin-body{overflow:auto}
 .admin-brand{display:flex;align-items:center;gap:16px}
 .admin-header-actions{display:flex;gap:12px;flex-wrap:wrap}
 
+.admin-status-stack{display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+
 .admin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px;padding:24px;flex:1 1 auto;align-content:start}
 .admin-grid .span-2{grid-column:span 2;min-width:0}
 .admin-grid .span-3{grid-column:span 3;min-width:0}
