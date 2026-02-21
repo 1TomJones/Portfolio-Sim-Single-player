@@ -414,4 +414,6 @@ button:disabled{opacity:.6;cursor:not-allowed}
 
 #adminAssetsList{flex:1 1 auto;min-height:260px;max-height:none;overflow:auto}
 #adminChart{height:420px}
+.admin-chart-wrap{height:420px;min-height:320px}
+
 #playersTbody td{font-size:.85rem}

@@ -24,6 +24,7 @@ let assetRowMap = new Map();
 let chartApi = null;
 let candleSeries = null;
 let fairSeries = null;
+let fairValuePriceLine = null;
 let chartResizeObserver = null;
 let selectedScenarioId = "";
 let currentTick = 0;
@@ -155,6 +156,8 @@ async function loadScenarioNewsTimeline(scenarioId) {
 function ensureChart() {
   if (chartApi || !adminChartEl) return;
   chartApi = LightweightCharts.createChart(adminChartEl, {
+    width: Math.max(0, adminChartEl.clientWidth),
+    height: Math.max(0, adminChartEl.clientHeight),
     layout: { background: { color: "#0d1423" }, textColor: "#e7efff" },
     grid: { vertLines: { color: "#1b2b45" }, horzLines: { color: "#1b2b45" } },
     rightPriceScale: {
@@ -173,7 +176,13 @@ function ensureChart() {
     wickUpColor: "#2ecc71",
     wickDownColor: "#ff5c5c",
   });
-  fairSeries = chartApi.addLineSeries({ color: "#ffd84d", lineWidth: 2, title: "Fair Value" });
+  fairSeries = chartApi.addLineSeries({
+    color: "#ffd84d",
+    lineWidth: 2,
+    title: "Fair Value",
+    lastValueVisible: true,
+    priceLineVisible: false,
+  });
 
   chartResizeObserver = new ResizeObserver(() => {
     chartApi?.applyOptions({ width: adminChartEl.clientWidth, height: adminChartEl.clientHeight });
@@ -242,11 +251,24 @@ function renderAssets() {
   inTab.forEach((asset) => appendAsset(asset));
 }
 
-function upsertFairPoint(asset, candleTime) {
+function upsertFairPoint(asset, pointOrTime, maybeValue) {
   if (!Array.isArray(asset.fairPoints)) asset.fairPoints = [];
+  const fairValue = Number.isFinite(maybeValue)
+    ? maybeValue
+    : Number.isFinite(asset.fairValue)
+      ? asset.fairValue
+      : asset.price;
+  const point = typeof pointOrTime === "object" && pointOrTime
+    ? {
+      time: pointOrTime.time,
+      value: Number.isFinite(pointOrTime.value) ? pointOrTime.value : fairValue,
+    }
+    : { time: pointOrTime, value: fairValue };
+
+  if (!Number.isFinite(point?.time) || !Number.isFinite(point?.value)) return;
+
   const last = asset.fairPoints[asset.fairPoints.length - 1];
-  const point = { time: candleTime, value: asset.fairValue };
-  if (last && last.time === candleTime) {
+  if (last && last.time === point.time) {
     asset.fairPoints[asset.fairPoints.length - 1] = point;
   } else {
     asset.fairPoints.push(point);
@@ -255,14 +277,32 @@ function upsertFairPoint(asset, candleTime) {
 
 function setChartDataForAsset(asset) {
   if (!candleSeries || !fairSeries) return;
+  const fairValue = Number.isFinite(asset.fairValue) ? asset.fairValue : asset.price;
   const candles = [...(asset.candles || [])];
   if (asset.candle) candles.push(asset.candle);
   candleSeries.setData(candles);
 
-  if (!Array.isArray(asset.fairPoints) || !asset.fairPoints.length) {
-    asset.fairPoints = candles.map((c) => ({ time: c.time, value: asset.fairValue }));
+  if (!Array.isArray(asset.fairPoints)) asset.fairPoints = [];
+  if (!asset.fairPoints.length && candles.length) {
+    asset.fairPoints = candles.map((c) => ({ time: c.time, value: c.close }));
   }
+  if (asset.fairPoint) upsertFairPoint(asset, asset.fairPoint);
   fairSeries.setData(asset.fairPoints);
+
+  if (fairValuePriceLine) {
+    fairSeries.removePriceLine(fairValuePriceLine);
+    fairValuePriceLine = null;
+  }
+  if (Number.isFinite(fairValue)) {
+    fairValuePriceLine = fairSeries.createPriceLine({
+      price: fairValue,
+      color: "#ffd84d",
+      lineWidth: 2,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      title: "FV",
+    });
+  }
+
   chartApi?.timeScale().fitContent();
 }
 
@@ -280,15 +320,30 @@ function selectAsset(assetId) {
 
 function updateChartAsset(asset) {
   if (!candleSeries || !fairSeries || selectedAssetId !== asset.id) return;
+  const fairValue = Number.isFinite(asset.fairValue) ? asset.fairValue : asset.price;
   if (asset.completedCandle) {
     candleSeries.update(asset.completedCandle);
-    upsertFairPoint(asset, asset.completedCandle.time);
-    fairSeries.update({ time: asset.completedCandle.time, value: asset.fairValue });
+    upsertFairPoint(asset, asset.completedFairPoint || { time: asset.completedCandle.time, value: fairValue });
+    fairSeries.update(asset.completedFairPoint || { time: asset.completedCandle.time, value: fairValue });
   }
   if (asset.candle) {
     candleSeries.update(asset.candle);
-    upsertFairPoint(asset, asset.candle.time);
-    fairSeries.update({ time: asset.candle.time, value: asset.fairValue });
+    upsertFairPoint(asset, asset.fairPoint || { time: asset.candle.time, value: fairValue });
+    fairSeries.update(asset.fairPoint || { time: asset.candle.time, value: fairValue });
+  }
+
+  if (fairValuePriceLine) {
+    fairSeries.removePriceLine(fairValuePriceLine);
+    fairValuePriceLine = null;
+  }
+  if (Number.isFinite(fairValue)) {
+    fairValuePriceLine = fairSeries.createPriceLine({
+      price: fairValue,
+      color: "#ffd84d",
+      lineWidth: 2,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      title: "FV",
+    });
   }
 }
 
@@ -405,7 +460,9 @@ socket.on("adminAssetSnapshot", (payload) => {
 
   assets = (payload.assets || []).map((asset) => ({
     ...asset,
-    fairPoints: [...(asset.candles || []).map((c) => ({ time: c.time, value: asset.fairValue }))],
+    fairPoints: [...(asset.fairPoints || [])],
+    fairPoint: asset.fairPoint || null,
+    completedFairPoint: null,
   }));
   assetMap = new Map(assets.map((asset) => [asset.id, asset]));
   renderTabs();
@@ -430,11 +487,13 @@ socket.on("adminAssetTick", (payload) => {
     asset.fairValue = update.fairValue;
     asset.candle = update.candle;
     asset.completedCandle = update.completedCandle;
+    asset.fairPoint = update.fairPoint || null;
+    asset.completedFairPoint = update.completedFairPoint || null;
     if (update.completedCandle) {
       asset.candles.push(update.completedCandle);
-      upsertFairPoint(asset, update.completedCandle.time);
+      upsertFairPoint(asset, update.completedFairPoint || { time: update.completedCandle.time, value: asset.fairValue });
     }
-    if (update.candle) upsertFairPoint(asset, update.candle.time);
+    if (update.candle) upsertFairPoint(asset, update.fairPoint || { time: update.candle.time, value: asset.fairValue });
     updateAssetRowDisplay(asset);
     updateChartAsset(asset);
   });
