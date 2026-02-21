@@ -17,6 +17,7 @@ const runErrorView = document.getElementById("runErrorView");
 const runErrorTitle = runErrorView?.querySelector("h2");
 const runErrorDetail = runErrorView?.querySelector("p.muted");
 const scenarioLabel = document.getElementById("scenarioLabel");
+const gameDateBadge = document.getElementById("gameDateBadge");
 const newsFeed = document.getElementById("newsFeed");
 const macroFeed = document.getElementById("macroFeed");
 const joinView = document.getElementById("joinView");
@@ -59,6 +60,31 @@ let currentPhase = "lobby";
 let hasJoined = false;
 let macroEvents = [];
 let currentTick = 0;
+let simStartMs = null;
+let tickMs = 500;
+
+
+function formatGameTime(gameTimeMs) {
+  if (!Number.isFinite(gameTimeMs)) return "—";
+  return new Date(gameTimeMs).toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function updateGameDateDisplay(gameTimeMs = null) {
+  if (!gameDateBadge) return;
+  const resolved = Number.isFinite(gameTimeMs)
+    ? gameTimeMs
+    : Number.isFinite(simStartMs)
+      ? simStartMs + currentTick * tickMs
+      : null;
+  gameDateBadge.textContent = `Game Time: ${formatGameTime(resolved)}`;
+}
 
 function show(node) {
   if (node) node.classList.remove("hidden");
@@ -353,6 +379,10 @@ function selectAsset(assetId) {
   const candleData = [...(asset.candles || [])];
   if (asset.candle) candleData.push(asset.candle);
   candleSeriesApi?.setData(candleData);
+  if (chartApi) {
+    chartApi.timeScale().fitContent();
+    chartApi.timeScale().scrollToRealTime();
+  }
   updateAverageLine(asset);
 }
 
@@ -427,10 +457,16 @@ socket.on("disconnect", () => {
 socket.on("phase", setPhase);
 
 socket.on("assetSnapshot", (payload) => {
+  tickMs = Number(payload?.tickMs || tickMs);
+  currentTick = Number(payload?.tick || currentTick);
+  if (Number.isFinite(payload?.simStartMs)) simStartMs = Number(payload.simStartMs);
+  else if (Array.isArray(payload?.assets) && Number.isFinite(payload.assets[0]?.simStartMs)) simStartMs = Number(payload.assets[0].simStartMs);
+
   assets = payload.assets || [];
   assetMap = new Map(assets.map((asset) => [asset.id, asset]));
   renderAssetTabs();
   renderAssetsList();
+  updateGameDateDisplay();
   if (!selectedAssetId && assets.length) {
     const preferred = assets.find((asset) => asset.category === activeTab) || assets[0];
     selectAsset(preferred.id);
@@ -438,6 +474,8 @@ socket.on("assetSnapshot", (payload) => {
 });
 
 socket.on("assetTick", (payload) => {
+  currentTick = Number(payload?.tick || currentTick);
+  updateGameDateDisplay();
   (payload.assets || []).forEach((update) => {
     const asset = assetMap.get(update.id);
     if (!asset) return;
@@ -474,6 +512,8 @@ socket.on("news", (payload) => {
 
 socket.on("macroEvents", (payload) => {
   currentTick = Number(payload?.tick || 0);
+  if (Number.isFinite(payload?.gameTimeMs)) updateGameDateDisplay(Number(payload.gameTimeMs));
+  else updateGameDateDisplay();
   macroEvents = Array.isArray(payload?.events) ? payload.events : [];
   renderMacroEvents();
 });
@@ -517,6 +557,7 @@ async function init() {
 
   socket.connect();
   updatePortfolioSummary();
+  updateGameDateDisplay();
   refreshViewForPhase();
 }
 
