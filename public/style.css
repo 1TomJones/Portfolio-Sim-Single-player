@@ -264,6 +264,7 @@ button:disabled{opacity:.6;cursor:not-allowed}
 .hud-pill[data-state="error"]{background:rgba(255,92,92,0.18);border-color:#ff5c5c}
 .hud-pill[data-paused="true"]{background:rgba(255,92,92,0.16);border-color:rgba(255,92,92,0.5)}
 .hud-pill[data-phase="running"]{background:rgba(46,204,113,0.12);border-color:rgba(46,204,113,0.45);color:#c8f5dd}
+#gameDateBadge{font-size:0.92rem;font-weight:700;padding:6px 12px;letter-spacing:0.02em}
 .hud-news{display:flex;flex-direction:column;gap:4px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px 10px;min-width:260px;max-width:460px}
 .news-panel{display:flex;flex-direction:column;gap:12px;flex:1;min-height:0}
 .news-body{display:flex;flex-direction:column;gap:12px;flex:1;overflow-y:auto;min-height:0;max-height:100%;scrollbar-width:thin}

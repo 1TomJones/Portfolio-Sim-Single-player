@@ -69,6 +69,7 @@ let macroEvents = [];
 let currentTick = 0;
 let simStartMs = null;
 let tickMs = 500;
+const GAME_MS_PER_TICK = 60 * 60 * 1000;
 
 
 function formatGameTime(gameTimeMs) {
@@ -78,9 +79,13 @@ function formatGameTime(gameTimeMs) {
     month: "short",
     day: "2-digit",
     hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
   });
+}
+
+
+function gameTimeForTick(tick) {
+  if (!Number.isFinite(simStartMs) || !Number.isFinite(tick)) return null;
+  return simStartMs + Number(tick) * GAME_MS_PER_TICK;
 }
 
 function updateGameDateDisplay(gameTimeMs = null) {
@@ -88,7 +93,7 @@ function updateGameDateDisplay(gameTimeMs = null) {
   const resolved = Number.isFinite(gameTimeMs)
     ? gameTimeMs
     : Number.isFinite(simStartMs)
-      ? simStartMs + currentTick * tickMs
+      ? simStartMs + currentTick * GAME_MS_PER_TICK
       : null;
   gameDateBadge.textContent = `Game Time: ${formatGameTime(resolved)}`;
 }
@@ -121,11 +126,11 @@ async function validateScenario() {
   }
 }
 
-function pushNewsItem(headline, tick, category = "general") {
+function pushNewsItem(headline, gameTimeMs, category = "general") {
   if (!newsFeed || !headline || category !== "general") return;
   const item = document.createElement("div");
   item.className = "news-item";
-  item.innerHTML = `<strong>T+${tick ?? "—"}s</strong><span class="muted">${headline}</span>`;
+  item.innerHTML = `<strong>${formatGameTime(gameTimeMs)}</strong><span class="muted">${headline}</span>`;
   newsFeed.prepend(item);
 }
 
@@ -154,10 +159,12 @@ function renderMacroEvents() {
     const flashWindow = event.status === "expected" && Number(event.actualTick) - Number(currentTick) <= 10 && Number(event.actualTick) - Number(currentTick) >= 0;
     if (flashWindow) item.classList.add("flash-alert");
 
+    const actualTimeLabel = formatGameTime(gameTimeForTick(event.actualTick));
+    const expectedTimeLabel = formatGameTime(gameTimeForTick(event.expectationTick));
     const statusLine =
       event.status === "actual"
-        ? `<span class="macro-status actual">Actual (tick ${event.actualTick})</span><span>${event.actual}</span>`
-        : `<span class="macro-status expected">Expected (tick ${event.expectationTick})</span><span>${event.expected}</span>`;
+        ? `<span class="macro-status actual">Actual (${actualTimeLabel})</span><span>${event.actual}</span>`
+        : `<span class="macro-status expected">Expected (${expectedTimeLabel})</span><span>${event.expected}</span>`;
 
     item.innerHTML = `<strong>${event.label}</strong>${statusLine}`;
     macroFeed.appendChild(item);
@@ -525,7 +532,7 @@ socket.on("portfolio", (payload) => {
 });
 
 socket.on("news", (payload) => {
-  pushNewsItem(payload?.headline, payload?.tick, payload?.category);
+  pushNewsItem(payload?.headline, payload?.gameTimeMs, payload?.category);
 });
 
 socket.on("macroEvents", (payload) => {

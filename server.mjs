@@ -109,7 +109,7 @@ function quantize(value, decimals = 2) {
 function resolveSimStartTimestampMs(scenario) {
   const parsed = Date.parse(scenario?.simStart);
   if (Number.isFinite(parsed)) return parsed;
-  return Date.UTC(2024, 0, 2, 14, 30, 0);
+  return Date.now();
 }
 
 function buildInitialCandles(startPrice, decimals, maxCandles, ticksPerCandle, tickMs, simStartMs) {
@@ -179,6 +179,7 @@ function createSimulationState(scenarioId) {
 
   const simCfg = {
     tickMs: Number(scenario.tickMs || 500),
+    gameMsPerTick: 60 * 60 * 1000,
     ticksPerCandle: Number(scenario.ticksPerCandle || 10),
     maxCandles: Number(scenario.maxCandles || 80),
     meanReversion: Number(scenario.meanReversion || 0.12),
@@ -221,7 +222,7 @@ function createSimulationState(scenarioId) {
 }
 
 function currentGameTimestampMs() {
-  return sim.simStartMs + sim.tick * sim.simCfg.tickMs;
+  return sim.simStartMs + sim.tick * sim.simCfg.gameMsPerTick;
 }
 
 function macroPayload() {
@@ -464,6 +465,7 @@ function applyNewsIfAny() {
 
     io.emit("news", {
       tick: sim.tick,
+      gameTimeMs: currentGameTimestampMs(),
       headline: nextNews.headline,
       factorShocks,
       assetShocks,
