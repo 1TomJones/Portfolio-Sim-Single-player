@@ -64,7 +64,7 @@
 
         <section class="panel span-2">
           <div class="panel-header">
-            <h2>Asset chart + fair value overlay</h2>
+            <h2>Asset price chart (candles) with fair value overlay</h2>
             <span id="selectedAssetLabel" class="muted">Select an asset</span>
           </div>
           <div class="chart-wrap">
@@ -75,7 +75,14 @@
         <section class="panel span-3 admin-news-panel">
           <div class="panel-header">
             <h2>Admin news timeline</h2>
-            <span class="muted">All releases in tick order</span>
+            <span class="muted">All releases in tick order · outline key below</span>
+          </div>
+          <div class="admin-news-key muted">
+            <span class="key-item"><span class="key-swatch impact-low"></span>Low impact</span>
+            <span class="key-item"><span class="key-swatch impact-light"></span>Light impact</span>
+            <span class="key-item"><span class="key-swatch impact-medium"></span>Medium impact</span>
+            <span class="key-item"><span class="key-swatch impact-high"></span>High impact</span>
+            <span class="key-item"><span class="key-swatch released"></span>Released</span>
           </div>
           <div id="adminNewsFeed" class="admin-news-feed"></div>
         </section>
