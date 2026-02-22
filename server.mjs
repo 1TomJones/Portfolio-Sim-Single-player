@@ -45,6 +45,21 @@ const ANNUAL_RISK_FREE_RATE_PCT = 5;
 const SIMULATION_LENGTH_YEARS = 0.5;
 const RISK_FREE_RETURN_PCT = ANNUAL_RISK_FREE_RATE_PCT * SIMULATION_LENGTH_YEARS;
 const GRACE_PERIOD_CANDLES = 60;
+const TICKS_PER_MONTH = 3600;
+const MONTHLY_REGIME_DRIFT = {
+  riskOn: { risk: 0.04, gold: -0.02, silver: -0.01 },
+  riskOff: { risk: -0.05, gold: 0.04, silver: 0.02 },
+  recovery: { risk: 0.06, gold: -0.03, silver: -0.02 },
+};
+const REGIME_SYMBOL_MULTIPLIERS = {
+  SPX: 1.0,
+  ESTOXX: 1.1,
+  NKY: 1.1,
+  CSI: 0.8,
+  FTSE: 0.7,
+  GOLD: 1.2,
+  SILVER: 0.7,
+};
 const scenariosPath = path.join(__dirname, "scenarios");
 const metadataPath = path.join(__dirname, "public", "meta", "scenarios.json");
 const fallbackScenarioId = process.env.DEFAULT_SCENARIO_ID || "default";
@@ -199,6 +214,7 @@ function createAssetState(assetDef, simCfg) {
     basePrice: assetDef.startPrice,
     factors: assetDef.factors || {},
     correlations: assetDef.correlations || {},
+    regimeDriftFactor: 1,
     price: quantize(initial.price, displayDecimals),
     fairValue: quantize(assetDef.startPrice, displayDecimals),
     candles: initial.candles,
@@ -213,6 +229,28 @@ function createAssetState(assetDef, simCfg) {
     ticksInCandle: 0,
     nextCandleTime: lastCandleTime + stepSeconds,
   };
+}
+
+function regimeMonthlyDriftForTick(tick) {
+  const month = Math.floor(Math.max(0, Number(tick) - 1) / TICKS_PER_MONTH) + 1;
+  if (month <= 2) return MONTHLY_REGIME_DRIFT.riskOn;
+  if (month <= 4) return MONTHLY_REGIME_DRIFT.riskOff;
+  return MONTHLY_REGIME_DRIFT.recovery;
+}
+
+function assetRegimeDriftPerTick(asset) {
+  const symbol = String(asset?.symbol || "").toUpperCase();
+  const regimeDrift = regimeMonthlyDriftForTick(sim.tick);
+  const monthlyDrift = symbol === "GOLD" ? regimeDrift.gold : symbol === "SILVER" ? regimeDrift.silver : regimeDrift.risk;
+  const multiplier = Number(REGIME_SYMBOL_MULTIPLIERS[symbol] ?? 1);
+  return (monthlyDrift / TICKS_PER_MONTH) * multiplier;
+}
+
+function applyRegimeFairValueDrift(asset) {
+  if (sim.scenario?.id !== "macro-six-month") return;
+  const perTickDrift = assetRegimeDriftPerTick(asset);
+  const nextFactor = Number(asset.regimeDriftFactor || 1) * (1 + perTickDrift);
+  asset.regimeDriftFactor = Number.isFinite(nextFactor) && nextFactor > 0 ? nextFactor : 1;
 }
 
 function createSimulationState(scenarioId) {
@@ -850,7 +888,12 @@ function computeFairValue(asset) {
     return acc + ((source.price - source.basePrice) / source.basePrice) * Number(beta || 0);
   }, 0);
 
-  const target = asset.basePrice * (1 + factorContribution + correlationContribution + inlineCorrelationContribution) * (1 + impactPct);
+  const driftFactor = Number.isFinite(asset.regimeDriftFactor) ? asset.regimeDriftFactor : 1;
+  const target =
+    asset.basePrice *
+    (1 + factorContribution + correlationContribution + inlineCorrelationContribution) *
+    (1 + impactPct) *
+    driftFactor;
   return Math.max(0.01, quantize(target, asset.decimals));
 }
 
@@ -886,6 +929,7 @@ function stepTick() {
 
   let candleClosed = false;
   for (const asset of sim.assets) {
+    applyRegimeFairValueDrift(asset);
     asset.fairValue = computeFairValue(asset);
     asset.price = moveAssetPriceByPoint(asset);
 
