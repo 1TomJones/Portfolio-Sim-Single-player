@@ -515,10 +515,20 @@ function canShortAsset(asset) {
 function cashDeltaForTrade(side, qty, price) {
   const tradeQty = Math.max(0, Number(qty || 0));
   const unitPrice = Math.max(0, Number(price || 0));
-  // Cash movement depends on trade direction, not whether the position is long/short.
-  // Buys consume cash and sells add cash, including short covers and short opens.
-  if (side === "buy") return -tradeQty * unitPrice;
-  if (side === "sell") return tradeQty * unitPrice;
+  const position = Number(previousPosition || 0);
+
+  if (side === "buy") {
+    const shortCoveredQty = Math.min(Math.max(0, -position), tradeQty);
+    const longOpenedQty = Math.max(0, tradeQty - shortCoveredQty);
+    return shortCoveredQty * unitPrice - longOpenedQty * unitPrice;
+  }
+
+  if (side === "sell") {
+    const longClosedQty = Math.min(Math.max(0, position), tradeQty);
+    const shortOpenedQty = Math.max(0, tradeQty - longClosedQty);
+    return longClosedQty * unitPrice - shortOpenedQty * unitPrice;
+  }
+
   return 0;
 }
 
