@@ -515,7 +515,7 @@ function canShortAsset(asset) {
 function cashDeltaForTrade(side, qty, price) {
   const tradeQty = Math.max(0, Number(qty || 0));
   const unitPrice = Math.max(0, Number(price || 0));
-  const position = Number(previousPosition || 0);
+  const position = Number(positionInput || 0);
 
   if (side === "buy") {
     const shortCoveredQty = Math.min(Math.max(0, -position), tradeQty);
