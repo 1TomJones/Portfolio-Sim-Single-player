@@ -1166,8 +1166,19 @@ export class MarketEngine {
       player.realizedPnl = Number(player.realizedPnl || 0) + (price - entry) * closedQty * prevSign;
     }
 
-    const exposureDelta = Math.abs(next) - Math.abs(prev);
-    player.cash -= exposureDelta * price;
+    const prevLong = Math.max(0, prev);
+    const prevShort = Math.max(0, -prev);
+    const nextLong = Math.max(0, next);
+    const nextShort = Math.max(0, -next);
+
+    const longClosed = Math.max(0, prevLong - nextLong);
+    const longOpened = Math.max(0, nextLong - prevLong);
+    const shortOpened = Math.max(0, nextShort - prevShort);
+    const shortCovered = Math.max(0, prevShort - nextShort);
+
+    const cashDelta =
+      (longClosed + shortCovered - longOpened - shortOpened) * Number(price || 0);
+    player.cash += cashDelta;
     const isCrossing = prev !== 0 && Math.sign(prev) !== Math.sign(next);
 
     if (Math.abs(next) < 1e-6) {
