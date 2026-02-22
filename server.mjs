@@ -512,22 +512,24 @@ function canShortAsset(asset) {
   return sim.scenario?.id === "macro-six-month" && SHORTABLE_ASSET_IDS.has(asset?.id);
 }
 
-function cashDeltaForTrade(side, qty, price, previousPosition) {
+function cashDeltaForTrade(side, qty, price, positionInput = 0) {
   const tradeQty = Math.max(0, Number(qty || 0));
   const unitPrice = Math.max(0, Number(price || 0));
-  const position = Number(previousPosition || 0);
+  const position = Number(positionInput || 0);
 
   if (side === "buy") {
-    if (position >= 0) return -tradeQty * unitPrice;
-    const coverQty = Math.min(Math.abs(position), tradeQty);
-    const openingLongQty = Math.max(0, tradeQty - coverQty);
-    return coverQty * unitPrice - openingLongQty * unitPrice;
+    const shortCoveredQty = Math.min(Math.max(0, -position), tradeQty);
+    const longOpenedQty = Math.max(0, tradeQty - shortCoveredQty);
+    return shortCoveredQty * unitPrice - longOpenedQty * unitPrice;
   }
 
-  if (position <= 0) return -tradeQty * unitPrice;
-  const closingLongQty = Math.min(position, tradeQty);
-  const openingShortQty = Math.max(0, tradeQty - closingLongQty);
-  return closingLongQty * unitPrice - openingShortQty * unitPrice;
+  if (side === "sell") {
+    const longClosedQty = Math.min(Math.max(0, position), tradeQty);
+    const shortOpenedQty = Math.max(0, tradeQty - longClosedQty);
+    return longClosedQty * unitPrice - shortOpenedQty * unitPrice;
+  }
+
+  return 0;
 }
 
 function tradeCashRequirement(player, assetId, side, qty, price) {
