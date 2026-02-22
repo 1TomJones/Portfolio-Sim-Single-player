@@ -1012,6 +1012,12 @@ socket.on("assetTick", (payload) => {
 });
 
 socket.on("portfolio", (payload) => {
+  const activePositionsBefore = new Set(
+    [...positions.entries()]
+      .filter(([, position]) => Math.abs(Number(position?.position || 0)) > 0)
+      .map(([assetId]) => assetId)
+  );
+
   positions = new Map();
   (payload?.positions || []).forEach((item) => {
     positions.set(item.assetId, {
@@ -1020,10 +1026,22 @@ socket.on("portfolio", (payload) => {
       realizedPnl: item.realizedPnl ?? 0,
     });
   });
+
+  const activePositionsAfter = new Set(
+    [...positions.entries()]
+      .filter(([, position]) => Math.abs(Number(position?.position || 0)) > 0)
+      .map(([assetId]) => assetId)
+  );
+
+  const hasPinnedOrderChanged =
+    activePositionsBefore.size !== activePositionsAfter.size ||
+    [...activePositionsBefore].some((assetId) => !activePositionsAfter.has(assetId));
+
   if (Number.isFinite(payload?.availableCash)) availableCash = payload.availableCash;
   else if (Number.isFinite(payload?.freeCash)) availableCash = payload.freeCash;
   totalEquity = Number.isFinite(payload?.totalEquity) ? payload.totalEquity : NaN;
-  renderAssetsList();
+
+  if (hasPinnedOrderChanged) renderAssetsList();
   updateAssetsListValues();
 });
 
