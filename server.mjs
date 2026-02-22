@@ -518,16 +518,18 @@ function cashDeltaForTrade(side, qty, price, previousPosition) {
   const position = Number(previousPosition || 0);
 
   if (side === "buy") {
-    if (position >= 0) return -tradeQty * unitPrice;
-    const coverQty = Math.min(Math.abs(position), tradeQty);
-    const openingLongQty = Math.max(0, tradeQty - coverQty);
-    return coverQty * unitPrice - openingLongQty * unitPrice;
+    const shortCoveredQty = Math.min(Math.max(0, -position), tradeQty);
+    const longOpenedQty = Math.max(0, tradeQty - shortCoveredQty);
+    return shortCoveredQty * unitPrice - longOpenedQty * unitPrice;
   }
 
-  if (position <= 0) return -tradeQty * unitPrice;
-  const closingLongQty = Math.min(position, tradeQty);
-  const openingShortQty = Math.max(0, tradeQty - closingLongQty);
-  return closingLongQty * unitPrice - openingShortQty * unitPrice;
+  if (side === "sell") {
+    const longClosedQty = Math.min(Math.max(0, position), tradeQty);
+    const shortOpenedQty = Math.max(0, tradeQty - longClosedQty);
+    return longClosedQty * unitPrice - shortOpenedQty * unitPrice;
+  }
+
+  return 0;
 }
 
 function tradeCashRequirement(player, assetId, side, qty, price) {
