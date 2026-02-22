@@ -512,22 +512,28 @@ function canShortAsset(asset) {
   return sim.scenario?.id === "macro-six-month" && SHORTABLE_ASSET_IDS.has(asset?.id);
 }
 
-function tradeCashRequirement(player, assetId, side, qty, price) {
+function cashDeltaForTrade(side, qty, price, previousPosition) {
   const tradeQty = Math.max(0, Number(qty || 0));
   const unitPrice = Math.max(0, Number(price || 0));
-  const position = Number(ensurePosition(player, assetId).position || 0);
+  const position = Number(previousPosition || 0);
 
   if (side === "buy") {
-    return tradeQty * unitPrice;
+    if (position >= 0) return -tradeQty * unitPrice;
+    const coverQty = Math.min(Math.abs(position), tradeQty);
+    const openingLongQty = Math.max(0, tradeQty - coverQty);
+    return coverQty * unitPrice - openingLongQty * unitPrice;
   }
 
-  if (position <= 0) {
-    return 0;
-  }
+  if (position <= 0) return -tradeQty * unitPrice;
+  const closingLongQty = Math.min(position, tradeQty);
+  const openingShortQty = Math.max(0, tradeQty - closingLongQty);
+  return closingLongQty * unitPrice - openingShortQty * unitPrice;
+}
 
-  const closingQty = Math.min(position, tradeQty);
-  const openingShortQty = Math.max(0, tradeQty - closingQty);
-  return openingShortQty * unitPrice;
+function tradeCashRequirement(player, assetId, side, qty, price) {
+  const position = Number(ensurePosition(player, assetId).position || 0);
+  const projectedCashDelta = cashDeltaForTrade(side, qty, price, position);
+  return Math.max(0, -projectedCashDelta);
 }
 
 function computePositionPnl(positionData, assetPrice) {
@@ -826,7 +832,7 @@ function fillOrder(player, order, asset) {
 
   const qtySigned = order.side === "buy" ? effectiveQty : -effectiveQty;
   const previousPosition = Number(positionData.position || 0);
-  const cashDelta = -qtySigned * order.price;
+  const cashDelta = cashDeltaForTrade(order.side, effectiveQty, order.price, previousPosition);
 
   if (cashDelta < 0 && Number(player.cash || 0) + cashDelta < 0) {
     return { filledQty: 0, realizedPnlDelta: 0 };
