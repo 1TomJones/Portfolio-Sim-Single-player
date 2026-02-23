@@ -42,15 +42,22 @@
           </div>
         </section>
 
-        <section class="panel span-2 hidden">
-          <div class="panel-header"><h2>Players</h2></div>
-          <div class="panel-body">
-            <table>
-              <thead>
-                <tr><th>Name</th><th>Run</th><th>Joined</th><th>Status</th><th>Latest Score</th></tr>
-              </thead>
-              <tbody id="playersTbody"></tbody>
-            </table>
+        <section class="panel span-3">
+          <div class="panel-header"><h2>Players (live)</h2></div>
+          <div class="admin-player-grid">
+            <div class="admin-player-table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Player</th><th>% Invested</th><th>Current PnL</th></tr>
+                </thead>
+                <tbody id="playersTbody"></tbody>
+              </table>
+            </div>
+            <div class="portfolio-body admin-portfolio-body">
+              <canvas id="adminPortfolioPie" class="portfolio-pie" width="320" height="200"></canvas>
+              <p id="adminPortfolioPieDetails" class="muted">Select a player to inspect portfolio allocation.</p>
+              <p id="adminPortfolioPieTotals" class="muted">Commodities: 0.00% · Equities: 0.00%</p>
+            </div>
           </div>
         </section>
 

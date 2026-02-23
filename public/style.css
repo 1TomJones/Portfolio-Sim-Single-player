@@ -420,6 +420,17 @@ button:disabled{opacity:.6;cursor:not-allowed}
 .admin-chart-wrap{height:420px;min-height:320px}
 
 #playersTbody td{font-size:.85rem}
+.admin-player-grid{display:grid;grid-template-columns:minmax(320px,1.1fr) minmax(280px,1fr);gap:14px;align-items:stretch}
+.admin-player-table-wrap{overflow:auto;max-height:300px;border:1px solid rgba(255,255,255,0.08);border-radius:6px}
+#playersTbody tr.active{background:rgba(109,168,255,0.16)}
+#playersTbody tr.average-row{position:sticky;top:0;background:rgba(13,20,35,0.98);z-index:1}
+#playersTbody tr.average-row td{font-weight:700}
+.admin-player-btn{border:none;background:transparent;color:inherit;font:inherit;cursor:pointer;padding:0;text-align:left}
+.admin-portfolio-body{justify-content:flex-start;padding-top:12px}
+
+@media (max-width:1100px){
+  .admin-player-grid{grid-template-columns:1fr}
+}
 
 .leaderboard-link{display:inline-flex;align-items:center;justify-content:center;padding:6px 10px;border:1px solid var(--grid);border-radius:6px;color:var(--text);text-decoration:none;background:rgba(109,168,255,0.14)}
 .leaderboard-link:hover{background:rgba(109,168,255,0.25)}

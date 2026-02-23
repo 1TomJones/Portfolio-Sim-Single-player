@@ -626,6 +626,33 @@ function computePlayerPortfolioValue(player) {
   return Number(player.freeCash || 0) + Number(player.shortCollateral || 0) + holdingsValue;
 }
 
+function investedSummaryForPlayer(player) {
+  const portfolioValue = computePlayerPortfolioValue(player);
+  const { investedValue } = categoryExposureFromPositions(player);
+  const investedPct = portfolioValue > 0 ? (investedValue / portfolioValue) * 100 : 0;
+  return { portfolioValue, investedValue, investedPct };
+}
+
+function currentPnlForPlayer(player) {
+  return computePlayerPortfolioValue(player) - STARTING_CAPITAL;
+}
+
+function portfolioSlicesForPlayer(player) {
+  const rows = [];
+  for (const asset of sim.assets || []) {
+    const pos = Number(player.positions?.[asset.id]?.position || 0);
+    const value = Math.max(0, pos * Number(asset.price || 0));
+    if (value <= 0) continue;
+    rows.push({
+      assetId: asset.id,
+      symbol: asset.symbol,
+      category: asset.category || "equities",
+      value,
+    });
+  }
+  return rows;
+}
+
 function average(values) {
   if (!Array.isArray(values) || values.length === 0) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -1414,6 +1441,59 @@ app.get("/api/events/:code/players", (req, res) => {
       latestScore: player.latestScore,
     }));
   res.json({ players: rows });
+});
+
+app.get("/api/admin/players", (_req, res) => {
+  const playerRows = [...players.values()].map((player) => {
+    const { investedPct } = investedSummaryForPlayer(player);
+    return {
+      id: player.id,
+      name: player.name,
+      investedPct,
+      pnl: currentPnlForPlayer(player),
+      slices: portfolioSlicesForPlayer(player),
+    };
+  });
+
+  const playerCount = playerRows.length;
+  const byAssetId = new Map();
+  let avgInvestedPct = 0;
+  let avgPnl = 0;
+
+  if (playerCount > 0) {
+    avgInvestedPct = playerRows.reduce((sum, row) => sum + Number(row.investedPct || 0), 0) / playerCount;
+    avgPnl = playerRows.reduce((sum, row) => sum + Number(row.pnl || 0), 0) / playerCount;
+
+    for (const row of playerRows) {
+      for (const slice of row.slices) {
+        const current = byAssetId.get(slice.assetId) || {
+          assetId: slice.assetId,
+          symbol: slice.symbol,
+          category: slice.category,
+          value: 0,
+        };
+        current.value += Number(slice.value || 0);
+        byAssetId.set(slice.assetId, current);
+      }
+    }
+  }
+
+  const avgSlices = [...byAssetId.values()].map((entry) => ({
+    ...entry,
+    value: playerCount > 0 ? entry.value / playerCount : 0,
+  })).filter((entry) => entry.value > 0);
+
+  res.json({
+    players: playerRows,
+    average: {
+      id: "average",
+      name: "Average (All Players)",
+      investedPct: avgInvestedPct,
+      pnl: avgPnl,
+      slices: avgSlices,
+      playerCount,
+    },
+  });
 });
 
 app.get("/api/events/:code/status", (req, res) => {
