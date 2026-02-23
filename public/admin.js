@@ -7,6 +7,9 @@ const TAB_LABELS = { equities: "Equities", commodities: "Commodities", bonds: "B
 const phaseBadge = document.getElementById("adminPhaseBadge");
 const tickBadge = document.getElementById("adminTickBadge");
 const playersTbody = document.getElementById("playersTbody");
+const adminPortfolioPie = document.getElementById("adminPortfolioPie");
+const adminPortfolioPieDetails = document.getElementById("adminPortfolioPieDetails");
+const adminPortfolioPieTotals = document.getElementById("adminPortfolioPieTotals");
 const controlStatus = document.getElementById("controlStatus");
 const assetTabs = document.getElementById("adminAssetTabs");
 const assetsList = document.getElementById("adminAssetsList");
@@ -31,6 +34,9 @@ let currentTick = 0;
 let durationTicks = 21600;
 let newsTimeline = [];
 let selectedScenarioNews = [];
+let adminPlayers = [];
+let averagePlayer = null;
+let selectedPortfolioOwnerId = "average";
 
 const socket = io({ transports: ["websocket", "polling"], query: { role: "admin" } });
 
@@ -57,6 +63,118 @@ function updateTickBadge() {
 function asNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function formatSignedCurrency(value) {
+  if (!Number.isFinite(value)) return "—";
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${sign}$${Math.abs(Number(value)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatPercent(value) {
+  if (!Number.isFinite(value)) return "—";
+  return `${Number(value).toFixed(2)}%`;
+}
+
+function paletteFromCategory(category = "equities", idx = 0, total = 1) {
+  const ratio = total > 1 ? idx / (total - 1) : 0.5;
+  if (category === "commodities") {
+    return `hsl(${48 - ratio * 10}, 95%, ${62 - ratio * 18}%)`;
+  }
+  return `hsl(${200 + ratio * 14}, 95%, ${62 - ratio * 18}%)`;
+}
+
+function paintAdminPortfolioPie(owner) {
+  if (!adminPortfolioPie) return;
+  const ctx = adminPortfolioPie.getContext("2d");
+  if (!ctx) return;
+
+  const slices = Array.isArray(owner?.slices) ? owner.slices.filter((slice) => Number(slice?.value || 0) > 0) : [];
+  const total = slices.reduce((sum, slice) => sum + Number(slice.value || 0), 0);
+
+  const categoryBuckets = { commodities: [], equities: [] };
+  slices.forEach((slice) => {
+    if (slice.category === "commodities") categoryBuckets.commodities.push(slice);
+    else categoryBuckets.equities.push(slice);
+  });
+
+  ["commodities", "equities"].forEach((category) => {
+    categoryBuckets[category].forEach((slice, idx) => {
+      slice.color = paletteFromCategory(category, idx, categoryBuckets[category].length);
+    });
+  });
+
+  const w = adminPortfolioPie.width;
+  const h = adminPortfolioPie.height;
+  const cx = w / 2;
+  const cy = h / 2 - 4;
+  const radius = Math.min(w, h) * 0.35;
+  ctx.clearRect(0, 0, w, h);
+
+  let start = -Math.PI / 2;
+  slices.forEach((slice) => {
+    const angle = total > 0 ? (Number(slice.value || 0) / total) * Math.PI * 2 : 0;
+    const end = start + angle;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, radius, start, end);
+    ctx.closePath();
+    ctx.fillStyle = slice.color;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#0d1423";
+    ctx.stroke();
+    start = end;
+  });
+
+  if (!slices.length) {
+    ctx.fillStyle = "rgba(255,255,255,0.4)";
+    ctx.font = "13px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText("No positions yet", cx, cy + 4);
+  }
+
+  const commoditiesValue = slices
+    .filter((slice) => slice.category === "commodities")
+    .reduce((sum, slice) => sum + Number(slice.value || 0), 0);
+  const equitiesValue = slices
+    .filter((slice) => slice.category === "equities")
+    .reduce((sum, slice) => sum + Number(slice.value || 0), 0);
+
+  if (adminPortfolioPieDetails) {
+    const countLabel = owner?.id === "average" ? ` across ${owner?.playerCount || 0} players` : "";
+    adminPortfolioPieDetails.textContent = `${owner?.name || "—"}${countLabel} · Invested ${formatPercent(owner?.investedPct || 0)} · PnL ${formatSignedCurrency(owner?.pnl || 0)}`;
+  }
+  if (adminPortfolioPieTotals) {
+    const commodityPct = total > 0 ? (commoditiesValue / total) * 100 : 0;
+    const equitiesPct = total > 0 ? (equitiesValue / total) * 100 : 0;
+    adminPortfolioPieTotals.textContent = `Commodities: ${commodityPct.toFixed(2)}% · Equities: ${equitiesPct.toFixed(2)}%`;
+  }
+}
+
+function selectPortfolioOwner(id) {
+  selectedPortfolioOwnerId = id;
+  const owner = id === "average" ? averagePlayer : adminPlayers.find((player) => player.id === id);
+  paintAdminPortfolioPie(owner || averagePlayer || null);
+  renderPlayers();
+}
+
+function renderPlayers() {
+  if (!playersTbody) return;
+  playersTbody.innerHTML = "";
+
+  const rows = [];
+  if (averagePlayer) rows.push(averagePlayer);
+  rows.push(...adminPlayers);
+
+  rows.forEach((player) => {
+    const tr = document.createElement("tr");
+    tr.classList.toggle("active", player.id === selectedPortfolioOwnerId);
+    tr.classList.toggle("average-row", player.id === "average");
+    tr.innerHTML = `<td><button class="admin-player-btn" type="button">${player.name || "—"}</button></td><td>${formatPercent(player.investedPct || 0)}</td><td class="${Number(player.pnl || 0) > 0 ? "positive" : Number(player.pnl || 0) < 0 ? "negative" : ""}">${formatSignedCurrency(player.pnl || 0)}</td>`;
+    tr.querySelector(".admin-player-btn")?.addEventListener("click", () => selectPortfolioOwner(player.id));
+    playersTbody.appendChild(tr);
+  });
 }
 
 function impactPctForNewsItem(item) {
@@ -444,14 +562,25 @@ async function runControl(phase, label) {
   }
 }
 
-function fetchPlayers() {
-  const rows = [];
-  playersTbody.innerHTML = "";
-  rows.forEach((player) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${player.name || "—"}</td><td>${player.runId || "—"}</td><td>${player.joinedAt ? new Date(player.joinedAt).toLocaleString() : "—"}</td><td>${player.status || "active"}</td><td>${player.latestScore ?? "—"}</td>`;
-    playersTbody.appendChild(tr);
-  });
+async function fetchPlayers() {
+  try {
+    const response = await fetch("/api/admin/players", { cache: "no-store" });
+    if (!response.ok) throw new Error("admin-players-unavailable");
+    const payload = await response.json();
+    adminPlayers = Array.isArray(payload?.players) ? payload.players : [];
+    averagePlayer = payload?.average || null;
+    if (!selectedPortfolioOwnerId && averagePlayer) selectedPortfolioOwnerId = averagePlayer.id;
+    if (selectedPortfolioOwnerId !== "average" && !adminPlayers.some((player) => player.id === selectedPortfolioOwnerId)) {
+      selectedPortfolioOwnerId = averagePlayer ? "average" : adminPlayers[0]?.id || "";
+    }
+    renderPlayers();
+    selectPortfolioOwner(selectedPortfolioOwnerId || (averagePlayer ? "average" : adminPlayers[0]?.id || ""));
+  } catch {
+    adminPlayers = [];
+    averagePlayer = null;
+    renderPlayers();
+    paintAdminPortfolioPie(null);
+  }
 }
 
 document.getElementById("startBtn")?.addEventListener("click", () => startScenario());
@@ -484,6 +613,7 @@ socket.on("adminAssetSnapshot", (payload) => {
     const selected = assetMap.get(selectedAssetId);
     if (selected) setChartDataForAsset(selected);
   }
+  fetchPlayers();
 });
 
 socket.on("adminAssetTick", (payload) => {
@@ -509,6 +639,7 @@ socket.on("adminAssetTick", (payload) => {
     updateAssetRowDisplay(asset);
     updateChartAsset(asset);
   });
+  fetchPlayers();
 });
 
 socket.on("scenarioError", (payload) => {
