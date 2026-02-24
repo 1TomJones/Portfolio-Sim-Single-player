@@ -574,7 +574,7 @@
       "headline": "Shipping insurers raise premiums across Asia routes; delivery times extend",
       "decay_seconds": 180,
       "assetShocks": {
-        "idx-spx": -0.03,
+        "idx-spx": -0.045,
         "cmd-gold": 0.03
       }
     },
@@ -585,6 +585,18 @@
       "assetShocks": {
         "cmd-wti": -0.08
       }
+    },
+    {
+      "tick": 10000,
+      "headline": "US department of war issues warning to China and sends carrier fleet towards Taiwan.",
+      "decay_seconds": 220,
+      "assetShocks": {
+        "idx-spx": -0.05,
+        "eq-nvda": -0.02,
+        "cmd-gold": 0.03,
+        "cmd-silver": 0.04
+      },
+      "major": true
     },
     {
       "tick": 10400,
