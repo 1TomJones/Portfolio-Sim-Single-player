@@ -1394,6 +1394,8 @@ app.get("/api/leaderboard", (_req, res) => {
 
 io.on("connection", (socket) => {
   const role = socket.handshake.query?.role;
+  const roomId = `player:${socket.id}`;
+  socket.join(roomId);
 
   if (role === "leaderboard") {
     socket.emit("phase", sim.phase);
@@ -1410,11 +1412,9 @@ io.on("connection", (socket) => {
     const nm = String(nameInput || "Player").trim() || "Player";
     const runId = String(payload?.runId || `socket-${socket.id}`);
 
-    resetSimulation(SINGLE_PLAYER_SCENARIO_ID);
-    players.clear();
-
     players.set(socket.id, {
       id: socket.id,
+      roomId,
       runId,
       eventCode: "local-single-player",
       name: nm,
@@ -1430,7 +1430,7 @@ io.on("connection", (socket) => {
       scoringHistory: [],
     });
 
-    setPhase("running");
+    if (sim.phase !== "running") setPhase("running");
     broadcastRoster();
     ack?.({ ok: true, phase: sim.phase, assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, durationTicks: sim.durationTicks, scenario: sim.scenario, ...rosterPayload() });
     socket.emit("macroEvents", macroPayload());
