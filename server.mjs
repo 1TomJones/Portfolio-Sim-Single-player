@@ -45,7 +45,8 @@ const MAX_SHORT_NOTIONAL_MULTIPLIER = 1.0;
 const GRACE_PERIOD_CANDLES = 60;
 const scenariosPath = path.join(__dirname, "scenarios");
 const metadataPath = path.join(__dirname, "public", "meta", "scenarios.json");
-const fallbackScenarioId = process.env.DEFAULT_SCENARIO_ID || "default";
+const SINGLE_PLAYER_SCENARIO_ID = "macro-six-month";
+const fallbackScenarioId = process.env.DEFAULT_SCENARIO_ID || SINGLE_PLAYER_SCENARIO_ID;
 
 function safeJsonRead(filePath) {
   try {
@@ -95,7 +96,7 @@ function getScenarioMetadata() {
       duration_minutes:
         Number(scenario.duration_minutes) ||
         (Number.isFinite(Number(scenario.duration_seconds)) ? Number(scenario.duration_seconds) / 60 : undefined),
-    }));
+    })).filter((scenario) => scenario.id === SINGLE_PLAYER_SCENARIO_ID);
   }
 
   return listScenarios().map((scenario) => ({
@@ -106,7 +107,7 @@ function getScenarioMetadata() {
     duration_seconds: scenario.duration_seconds,
     duration_minutes: scenario.duration_seconds ? scenario.duration_seconds / 60 : undefined,
     version: scenario.version,
-  }));
+  })).filter((scenario) => scenario.id === SINGLE_PLAYER_SCENARIO_ID);
 }
 
 function quantize(value, decimals = 2) {
@@ -457,17 +458,13 @@ function applyMajorAssetMomentums() {
 
 let sim = createSimulationState(fallbackScenarioId);
 const players = new Map();
-const adminSockets = new Set();
 const loadedScenarios = listScenarios();
 console.log(`Loaded ${loadedScenarios.length} scenarios: ${loadedScenarios.map((scenario) => scenario.id).join(", ")}`);
 
-function resetSimulation(scenarioId) {
-  sim = createSimulationState(scenarioId);
+function resetSimulation(scenarioId = SINGLE_PLAYER_SCENARIO_ID) {
+  sim = createSimulationState(scenarioId || SINGLE_PLAYER_SCENARIO_ID);
   io.emit("assetSnapshot", { assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, simStartMs: sim.simStartMs, tick: sim.tick, durationTicks: sim.durationTicks, scenario: sim.scenario });
-  for (const socketId of adminSockets) {
-    const socket = io.sockets.sockets.get(socketId);
-    socket?.emit("adminAssetSnapshot", { assets: initialAdminAssetPayload(), tickMs: sim.simCfg.tickMs, simStartMs: sim.simStartMs, tick: sim.tick, durationTicks: sim.durationTicks, scenario: sim.scenario });
-  }
+  io.emit("macroEvents", macroPayload());
   broadcastLeaderboard();
 }
 
@@ -1196,27 +1193,10 @@ function stepTick() {
   applyOilConvergenceDrift();
 
   const updates = [];
-  const adminUpdates = [];
 
   let candleClosed = false;
   for (const asset of sim.assets) {
     if (!isAssetListed(asset)) {
-      adminUpdates.push({
-        id: asset.id,
-        symbol: asset.symbol,
-        name: asset.name,
-        category: asset.category,
-        group: asset.group,
-        listingTick: asset.listingTick,
-        isYield: asset.isYield,
-        price: asset.price,
-        candle: asset.currentCandle,
-        completedCandle: null,
-        lastTrade: asset.lastTrade || null,
-        fairValue: asset.fairValue,
-        fairPoint: asset.currentCandle ? { time: asset.currentCandle.time, value: asset.fairValue } : null,
-        completedFairPoint: null,
-      });
       continue;
     }
 
@@ -1298,12 +1278,6 @@ function stepTick() {
     };
 
     if (isAssetListed(asset)) updates.push(shared);
-    adminUpdates.push({
-      ...shared,
-      fairValue: asset.fairValue,
-      fairPoint: asset.currentCandle ? { time: asset.currentCandle.time, value: asset.fairValue } : null,
-      completedFairPoint: completedCandle ? { time: completedCandle.time, value: asset.fairValue } : null,
-    });
   }
 
 
@@ -1323,10 +1297,6 @@ function stepTick() {
     setPhase("ended");
   }
 
-  for (const socketId of adminSockets) {
-    const socket = io.sockets.sockets.get(socketId);
-    socket?.emit("adminAssetTick", { assets: adminUpdates, tick: sim.tick, durationTicks: sim.durationTicks, scenario: sim.scenario });
-  }
 }
 
 function startTicking() {
@@ -1358,32 +1328,6 @@ function initialAssetPayload() {
   }));
 }
 
-function initialAdminAssetPayload() {
-  const base = sim.assets.map((asset) => ({
-    id: asset.id,
-    symbol: asset.symbol,
-    name: asset.name,
-    category: asset.category,
-    group: asset.group,
-    listingTick: asset.listingTick,
-    isYield: asset.isYield,
-    price: asset.price,
-    candles: asset.candles,
-    candle: asset.currentCandle,
-    simStartMs: sim.simStartMs,
-  }));
-  return base.map((item) => {
-    const state = sim.assets.find((asset) => asset.id === item.id);
-    return {
-      ...item,
-      fairValue: state?.fairValue ?? item.price,
-      fairPoints: [...(state?.fairPoints || [])],
-      fairPoint: state?.currentCandle ? { time: state.currentCandle.time, value: state.fairValue } : null,
-    };
-  });
-}
-
-
 app.get("/meta/scenarios", (_req, res) => {
   res.json(getScenarioMetadata());
 });
@@ -1393,14 +1337,13 @@ app.get("/meta/scenarios.json", (_req, res) => {
 });
 
 function getMetadataPayload(req) {
-  const scenarios = getScenarioMetadata();
+  const scenarios = getScenarioMetadata().filter((scenario) => scenario.id === SINGLE_PLAYER_SCENARIO_ID);
   const baseUrl = `${req.protocol}://${req.get("host")}`;
   return {
-    sim_id: "portfolio_sim",
+    sim_id: "portfolio_sim_single_player",
     scenarios,
     links: {
-      player: `${baseUrl}/?event_code={event_code}&scenario_id={scenario_id}`,
-      admin: `${baseUrl}/admin.html?event_code={event_code}&scenario_id={scenario_id}`,
+      player: `${baseUrl}/`,
     },
   };
 }
@@ -1417,36 +1360,6 @@ app.get("/api/metadata", (req, res) => {
 
 app.get("/api/scenarios", (_req, res) => {
   res.json({ scenarios: getScenarioMetadata() });
-});
-
-app.post("/api/admin/start", (req, res) => {
-  const { scenario_id: scenarioId, duration_minutes: durationMinutes, event_code: eventCode } = req.body || {};
-  if (scenarioId) {
-    const activation = activateScenario(scenarioId);
-    if (!activation.ok) {
-      const status = activation.reason === "not-found" ? 404 : 409;
-      res.status(status).json({ ok: false, reason: activation.reason });
-      return;
-    }
-  }
-
-  if (eventCode) {
-    sim.eventCode = String(eventCode);
-  }
-  applyDurationOverride(durationMinutes);
-  setPhase("running");
-  res.json({ ok: true, scenario_id: sim.scenario?.id || null, event_code: sim.eventCode, duration_ticks: sim.durationTicks });
-});
-
-app.post("/api/admin/scenario", (req, res) => {
-  const { scenario_id: scenarioId } = req.body || {};
-  const activation = activateScenario(scenarioId);
-  if (!activation.ok) {
-    const status = activation.reason === "not-found" ? 404 : 409;
-    res.status(status).json({ ok: false, reason: activation.reason });
-    return;
-  }
-  res.json({ ok: true, scenario_id: sim.scenario?.id || null, phase: sim.phase });
 });
 
 app.use((req, _res, next) => {
@@ -1470,59 +1383,6 @@ app.get("/api/events/:code/players", (req, res) => {
   res.json({ players: rows });
 });
 
-app.get("/api/admin/players", (_req, res) => {
-  const playerRows = [...players.values()].map((player) => {
-    const { investedPct } = investedSummaryForPlayer(player);
-    return {
-      id: player.id,
-      name: player.name,
-      investedPct,
-      pnl: currentPnlForPlayer(player),
-      slices: portfolioSlicesForPlayer(player),
-    };
-  });
-
-  const playerCount = playerRows.length;
-  const byAssetId = new Map();
-  let avgInvestedPct = 0;
-  let avgPnl = 0;
-
-  if (playerCount > 0) {
-    avgInvestedPct = playerRows.reduce((sum, row) => sum + Number(row.investedPct || 0), 0) / playerCount;
-    avgPnl = playerRows.reduce((sum, row) => sum + Number(row.pnl || 0), 0) / playerCount;
-
-    for (const row of playerRows) {
-      for (const slice of row.slices) {
-        const current = byAssetId.get(slice.assetId) || {
-          assetId: slice.assetId,
-          symbol: slice.symbol,
-          category: slice.category,
-          value: 0,
-        };
-        current.value += Number(slice.value || 0);
-        byAssetId.set(slice.assetId, current);
-      }
-    }
-  }
-
-  const avgSlices = [...byAssetId.values()].map((entry) => ({
-    ...entry,
-    value: playerCount > 0 ? entry.value / playerCount : 0,
-  })).filter((entry) => entry.value > 0);
-
-  res.json({
-    players: playerRows,
-    average: {
-      id: "average",
-      name: "Average (All Players)",
-      investedPct: avgInvestedPct,
-      pnl: avgPnl,
-      slices: avgSlices,
-      playerCount,
-    },
-  });
-});
-
 app.get("/api/events/:code/status", (req, res) => {
   const code = req.params.code;
   res.json({ eventCode: code, phase: sim.phase });
@@ -1532,26 +1392,10 @@ app.get("/api/leaderboard", (_req, res) => {
   res.json(leaderboardPayload());
 });
 
-app.post("/api/admin/phase", (req, res) => {
-  const { phase } = req.body || {};
-  if (!["running", "paused", "ended"].includes(phase)) {
-    res.status(400).json({ ok: false, message: "Invalid phase." });
-    return;
-  }
-  setPhase(phase);
-  res.json({ ok: true, phase });
-});
-
 io.on("connection", (socket) => {
   const role = socket.handshake.query?.role;
 
-  if (role === "admin") {
-    adminSockets.add(socket.id);
-    socket.emit("phase", sim.phase);
-    socket.emit("adminAssetSnapshot", { assets: initialAdminAssetPayload(), tickMs: sim.simCfg.tickMs, simStartMs: sim.simStartMs, tick: sim.tick, durationTicks: sim.durationTicks, scenario: sim.scenario });
-    socket.emit("macroEvents", macroPayload());
-    socket.emit("leaderboard", leaderboardPayload());
-  } else if (role === "leaderboard") {
+  if (role === "leaderboard") {
     socket.emit("phase", sim.phase);
     socket.emit("leaderboard", leaderboardPayload());
   } else {
@@ -1565,16 +1409,14 @@ io.on("connection", (socket) => {
     const nameInput = typeof payload === "string" ? payload : payload?.name;
     const nm = String(nameInput || "Player").trim() || "Player";
     const runId = String(payload?.runId || `socket-${socket.id}`);
-    const eventCode = payload?.eventCode ? String(payload.eventCode) : null;
 
-    if (eventCode && !sim.eventCode) {
-      sim.eventCode = eventCode;
-    }
+    resetSimulation(SINGLE_PLAYER_SCENARIO_ID);
+    players.clear();
 
     players.set(socket.id, {
       id: socket.id,
       runId,
-      eventCode,
+      eventCode: "local-single-player",
       name: nm,
       positions: {},
       orders: [],
@@ -1588,6 +1430,7 @@ io.on("connection", (socket) => {
       scoringHistory: [],
     });
 
+    setPhase("running");
     broadcastRoster();
     ack?.({ ok: true, phase: sim.phase, assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, durationTicks: sim.durationTicks, scenario: sim.scenario, ...rosterPayload() });
     socket.emit("macroEvents", macroPayload());
@@ -1682,15 +1525,7 @@ io.on("connection", (socket) => {
   });
 
 
-  socket.on("adminPhaseSync", (payload) => {
-    if (!adminSockets.has(socket.id)) return;
-    const phase = String(payload?.phase || "").toLowerCase();
-    if (!["running", "paused", "ended"].includes(phase)) return;
-    setPhase(phase);
-  });
-
   socket.on("disconnect", () => {
-    adminSockets.delete(socket.id);
     players.delete(socket.id);
     broadcastRoster();
   });

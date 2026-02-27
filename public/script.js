@@ -1,7 +1,7 @@
 const query = new URLSearchParams(window.location.search);
 const runId = query.get("run_id") || `local-${Date.now()}`;
 const eventCode = query.get("event_code") || "local-event";
-const scenarioId = query.get("scenario_id") || "";
+const scenarioId = "macro-six-month";
 
 const socket = io({
   transports: ["websocket", "polling"],
@@ -20,9 +20,7 @@ const gameDateBadge = document.getElementById("gameDateBadge");
 const newsFeed = document.getElementById("newsFeed");
 const macroFeed = document.getElementById("macroFeed");
 const joinView = document.getElementById("joinView");
-const waitView = document.getElementById("waitView");
 const gameView = document.getElementById("gameView");
-const rosterList = document.getElementById("roster");
 const nameInput = document.getElementById("nameInput");
 const joinBtn = document.getElementById("joinBtn");
 const joinMsg = document.getElementById("joinMsg");
@@ -48,6 +46,7 @@ const endSummary = document.getElementById("endSummary");
 const endMetricsGrid = document.getElementById("endMetricsGrid");
 const endPnlChart = document.getElementById("endPnlChart");
 const endInvestedChart = document.getElementById("endInvestedChart");
+const simTimerBadge = document.getElementById("simTimerBadge");
 
 
 const chartContainer = document.getElementById("chart");
@@ -95,6 +94,7 @@ let knownMacroReleaseIds = new Set();
 let currentTick = 0;
 let simStartMs = null;
 let tickMs = 500;
+let durationTicks = 0;
 const GAME_MS_PER_TICK = 12 * 60 * 1000;
 let latestEndSummaryPayload = null;
 
@@ -125,6 +125,24 @@ function updateGameDateDisplay(gameTimeMs = null) {
   gameDateBadge.textContent = `Game Time: ${formatGameTime(resolved)}`;
 }
 
+function formatCountdownFromTicks(remainingTicks) {
+  const safeTicks = Math.max(0, Number(remainingTicks || 0));
+  const totalSeconds = Math.floor(safeTicks / 10);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function updateSimTimerDisplay() {
+  if (!simTimerBadge) return;
+  if (!Number.isFinite(durationTicks) || durationTicks <= 0) {
+    simTimerBadge.textContent = "Time Left: —";
+    return;
+  }
+  const remainingTicks = Math.max(0, durationTicks - currentTick);
+  simTimerBadge.textContent = `Time Left: ${formatCountdownFromTicks(remainingTicks)}`;
+}
+
 function show(node) {
   if (node) node.classList.remove("hidden");
 }
@@ -137,7 +155,6 @@ function showLaunchError(title, detail) {
   if (runErrorTitle) runErrorTitle.textContent = title;
   if (runErrorDetail) runErrorDetail.textContent = detail;
   hide(joinView);
-  hide(waitView);
   hide(gameView);
   show(runErrorView);
 }
@@ -892,34 +909,30 @@ function updateChartForAsset(asset) {
   runPendingChartAutofit();
 }
 
-function renderRoster(players = []) {
-  if (!rosterList) return;
-  rosterList.innerHTML = "";
-  players.forEach((player) => {
-    const item = document.createElement("li");
-    item.textContent = player.name || "Player";
-    rosterList.appendChild(item);
-  });
-}
+function renderRoster() {}
 
 function refreshViewForPhase() {
   if (!hasJoined) {
     show(joinView);
-    hide(waitView);
     hide(gameView);
     return;
   }
 
   if (currentPhase === "running") {
     hide(joinView);
-    hide(waitView);
     show(gameView);
     hide(endSummary);
     return;
   }
 
-  hide(joinView);
-  show(waitView);
+  if (currentPhase === "ended") {
+    hide(joinView);
+    show(gameView);
+    show(endSummary);
+    return;
+  }
+
+  show(joinView);
   hide(gameView);
 }
 
@@ -931,7 +944,6 @@ function setPhase(phase) {
   refreshViewForPhase();
   if (currentPhase === "ended") {
     hide(joinView);
-    hide(waitView);
     show(gameView);
     show(endSummary);
     if (latestEndSummaryPayload) renderEndSummary(latestEndSummaryPayload);
@@ -966,6 +978,7 @@ socket.on("phase", setPhase);
 socket.on("assetSnapshot", (payload) => {
   tickMs = Number(payload?.tickMs || tickMs);
   currentTick = Number(payload?.tick || currentTick);
+  durationTicks = Number(payload?.durationTicks || durationTicks);
   if (Number.isFinite(payload?.simStartMs)) simStartMs = Number(payload.simStartMs);
   else if (Array.isArray(payload?.assets) && Number.isFinite(payload.assets[0]?.simStartMs)) simStartMs = Number(payload.assets[0].simStartMs);
 
@@ -974,6 +987,7 @@ socket.on("assetSnapshot", (payload) => {
   renderAssetTabs();
   renderAssetsList();
   updateGameDateDisplay();
+  updateSimTimerDisplay();
   if (!selectedAssetId && assets.length) {
     const preferred = assets.find((asset) => asset.category === activeTab) || assets[0];
     selectAsset(preferred.id);
@@ -982,7 +996,9 @@ socket.on("assetSnapshot", (payload) => {
 
 socket.on("assetTick", (payload) => {
   currentTick = Number(payload?.tick || currentTick);
+  durationTicks = Number(payload?.durationTicks || durationTicks);
   updateGameDateDisplay();
+  updateSimTimerDisplay();
   (payload.assets || []).forEach((update) => {
     let asset = assetMap.get(update.id);
     if (!asset) {
@@ -1055,6 +1071,7 @@ socket.on("macroEvents", (payload) => {
   currentTick = Number(payload?.tick || 0);
   if (Number.isFinite(payload?.gameTimeMs)) updateGameDateDisplay(Number(payload.gameTimeMs));
   else updateGameDateDisplay();
+  updateSimTimerDisplay();
 
   macroEvents = Array.isArray(payload?.events) ? payload.events : [];
   const incomingIds = new Set(macroEvents.map((event) => event.id).filter(Boolean));
@@ -1132,14 +1149,18 @@ portfolioPie?.addEventListener("mouseleave", () => {
 
 joinBtn?.addEventListener("click", () => {
   const name = nameInput.value.trim();
+  if (!document.fullscreenElement) {
+    joinMsg.textContent = "Please go fullscreen before starting.";
+    return;
+  }
   if (!name) {
-    joinMsg.textContent = "Enter a name to join.";
+    joinMsg.textContent = "Enter your name to start.";
     return;
   }
 
   socket.emit("join", { name, runId, eventCode, scenarioId }, (res) => {
     if (!res?.ok) {
-      joinMsg.textContent = "Unable to join.";
+      joinMsg.textContent = "Unable to start simulation.";
       return;
     }
     hasJoined = true;
@@ -1186,6 +1207,7 @@ async function init() {
   socket.connect();
   updatePortfolioSummary();
   updateGameDateDisplay();
+  updateSimTimerDisplay();
   refreshViewForPhase();
 }
 
