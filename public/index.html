@@ -3,51 +3,34 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Portfolio Sim</title>
+  <title>Portfolio Sim (Single Player)</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body class="bg">
   <header class="brandbar">
     <div class="brand-left">
       <img src="/assets/Kent_Invest_Logo.png" alt="Kent Invest" class="brandlogo" />
-      <div class="brandtitle">Portfolio Sim</div>
+      <div class="brandtitle">Portfolio Sim · Single Player</div>
     </div>
     <div class="brand-right">
       <div class="hud-cluster">
         <div class="hud-line">
           <span id="connectionBadge" class="pill hud-pill" data-state="connecting">Connecting…</span>
           <span id="gameDateBadge" class="pill hud-pill">Game Time: —</span>
+          <span id="simTimerBadge" class="pill hud-pill">Time Left: —</span>
         </div>
       </div>
       <div class="brand-actions">
         <div class="brand-metrics">
-          <div class="metric">
-            <span class="metric-label">Total Equity</span>
-            <span id="equityLbl" class="metric-value">0</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Available Cash</span>
-            <span id="cashLbl" class="metric-value">0</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Unrealised PnL</span>
-            <span id="openPnlLbl" class="metric-value pnl-value">0.00</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Realised PnL</span>
-            <span id="realizedPnlLbl" class="metric-value pnl-value">0.00</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Total PnL</span>
-            <span id="pnlLbl" class="metric-value pnl-value">0.00</span>
-          </div>
+          <div class="metric"><span class="metric-label">Total Equity</span><span id="equityLbl" class="metric-value">0</span></div>
+          <div class="metric"><span class="metric-label">Available Cash</span><span id="cashLbl" class="metric-value">0</span></div>
+          <div class="metric"><span class="metric-label">Unrealised PnL</span><span id="openPnlLbl" class="metric-value pnl-value">0.00</span></div>
+          <div class="metric"><span class="metric-label">Realised PnL</span><span id="realizedPnlLbl" class="metric-value pnl-value">0.00</span></div>
+          <div class="metric"><span class="metric-label">Total PnL</span><span id="pnlLbl" class="metric-value pnl-value">0.00</span></div>
         </div>
-        <button id="gameFullscreenBtn" type="button" class="fullscreen-btn" data-fullscreen>Enter Fullscreen</button>
       </div>
     </div>
   </header>
-
-
 
   <section id="runErrorView" class="center hidden">
     <div class="card result-card">
@@ -56,126 +39,68 @@
     </div>
   </section>
 
-  <!-- JOIN -->
   <section id="joinView" class="center">
-    <div class="card">
-      <h1>Join the Market</h1>
-      <div class="row">
-        <input id="nameInput" placeholder="Your name" />
-        <button id="joinBtn">Join</button>
+    <div class="card join-card-wide">
+      <h1>Ready to Trade?</h1>
+      <p class="muted">This local single-player sim uses the 6-month macro scenario and starts immediately after you enter your name.</p>
+      <div class="preread">
+        <h3>Quick briefing</h3>
+        <ul>
+          <li>React to live official macro releases and market news while prices update in real time.</li>
+          <li>Build a <strong>diverse portfolio</strong> across equities and commodities to manage risk.</li>
+          <li>You are scored on: <strong>Total PnL</strong>, <strong>Return %</strong>, <strong>Max Drawdown</strong>, and <strong>Average % Invested</strong>.</li>
+          <li>Use the timer in the top bar to track how long is left in the simulation.</li>
+        </ul>
       </div>
-      <p class="muted" id="joinMsg">Enter your name to join the waiting room.</p>
-      <button id="joinFullscreenBtn" type="button" class="fullscreen-btn" data-fullscreen>Enter Fullscreen</button>
+      <p class="muted" id="joinMsg">Please go fullscreen first, then enter your name to begin instantly.</p>
+      <div class="row">
+        <button id="joinFullscreenBtn" type="button" class="fullscreen-btn" data-fullscreen>Go Fullscreen</button>
+        <input id="nameInput" placeholder="Your name" />
+        <button id="joinBtn">Start Simulation</button>
+      </div>
     </div>
   </section>
 
-  <!-- WAITING ROOM (shows roster) -->
-  <section id="waitView" class="center hidden">
-    <div class="card">
-      <h2>Waiting for host to start…</h2>
-      <p class="muted">You’re in. You’ll switch automatically when the game starts.</p>
-      <h3>Players joined</h3>
-      <ul id="roster" class="roster"></ul>
-      <button id="waitFullscreenBtn" type="button" class="fullscreen-btn" data-fullscreen>Enter Fullscreen</button>
-    </div>
-  </section>
-
-  <!-- GAME -->
   <section id="gameView" class="page hidden">
     <div class="game-shell">
       <div class="left-col">
         <div class="market-layout">
           <div class="panel card side-widget assets-card">
-            <div class="panel-header">
-              <h3>Assets</h3>
-              <span id="assetSubheading" class="muted small-text">Select an asset to trade</span>
-            </div>
+            <div class="panel-header"><h3>Assets</h3><span id="assetSubheading" class="muted small-text">Select an asset to trade</span></div>
             <div class="asset-tabs" id="assetTabs"></div>
             <div class="side-widget-body assets-body">
-              <div class="assets-header">
-                <span>Ticker</span>
-                <span class="assets-header-num">Price</span>
-                <span class="assets-header-num">Position</span>
-                <span class="assets-header-num">Pos Value</span>
-                <span class="assets-header-num">PnL</span>
-              </div>
+              <div class="assets-header"><span>Ticker</span><span class="assets-header-num">Price</span><span class="assets-header-num">Position</span><span class="assets-header-num">Pos Value</span><span class="assets-header-num">PnL</span></div>
               <div id="assetsList" class="assets-list"></div>
             </div>
           </div>
-
           <div class="panel card chart-card market-chart-card">
-            <div class="panel-header">
-              <h3>Price Chart</h3>
-              <div class="panel-tools">
-                <span class="mode-label">Candlesticks</span>
-                <span id="chartModeBadge" class="pill pill-mode">—</span>
-              </div>
-            </div>
-            <div class="chart-wrap">
-              <div id="chart" class="chart-surface"></div>
-            </div>
+            <div class="panel-header"><h3>Price Chart</h3><div class="panel-tools"><span class="mode-label">Candlesticks</span><span id="chartModeBadge" class="pill pill-mode">—</span></div></div>
+            <div class="chart-wrap"><div id="chart" class="chart-surface"></div></div>
           </div>
-
           <div class="insight-stack">
             <div class="panel card trade-card insight-trade-card">
-              <div class="panel-header trade-header">
-                <h3>Order Entry <span id="orderAssetLabel" class="order-asset-label">—</span></h3>
-              </div>
+              <div class="panel-header trade-header"><h3>Order Entry <span id="orderAssetLabel" class="order-asset-label">—</span></h3></div>
               <div class="trade-form">
-                <div class="form-row form-row-qty">
-                  <label for="quantityInput" class="muted small-text">Quantity</label>
-                  <input id="quantityInput" type="number" min="1" step="1" value="1" />
-                </div>
-                <div class="form-actions compact-actions">
-                  <button id="buyBtn" class="buy" type="button">Buy</button>
-                  <button id="sellBtn" class="sell" type="button">Sell</button>
-                </div>
-                <div class="form-row">
-                  <span class="muted small-text">Estimated order value</span>
-                  <strong id="orderValueLabel">$0.00</strong>
-                </div>
+                <div class="form-row form-row-qty"><label for="quantityInput" class="muted small-text">Quantity</label><input id="quantityInput" type="number" min="1" step="1" value="1" /></div>
+                <div class="form-actions compact-actions"><button id="buyBtn" class="buy" type="button">Buy</button><button id="sellBtn" class="sell" type="button">Sell</button></div>
+                <div class="form-row"><span class="muted small-text">Estimated order value</span><strong id="orderValueLabel">$0.00</strong></div>
               </div>
             </div>
-
             <div class="panel card placeholder-card portfolio-panel">
-              <div class="panel-header">
-                <h3>Portfolio Overview</h3>
-                <span class="muted small-text">Live exposure mix</span>
-              </div>
-              <div class="portfolio-body">
-                <canvas id="portfolioPie" class="portfolio-pie" width="320" height="200" aria-label="Portfolio allocation chart"></canvas>
-                <p id="portfolioPieDetails" class="muted small-text">Buy assets to populate the portfolio overview.</p>
-                <p id="portfolioPieTotals" class="small-text">Commodities: 0.00% · Equities: 0.00%</p>
-              </div>
+              <div class="panel-header"><h3>Portfolio Overview</h3><span class="muted small-text">Live exposure mix</span></div>
+              <div class="portfolio-body"><canvas id="portfolioPie" class="portfolio-pie" width="320" height="200" aria-label="Portfolio allocation chart"></canvas><p id="portfolioPieDetails" class="muted small-text">Buy assets to populate the portfolio overview.</p><p id="portfolioPieTotals" class="small-text">Commodities: 0.00% · Equities: 0.00%</p></div>
             </div>
-
             <div class="panel card placeholder-card macro-panel">
-              <div class="panel-header">
-                <h3>Official News Release</h3>
-                <span class="muted small-text">Official release timeline</span>
-              </div>
-              <div id="macroFeed" class="macro-body">
-                <div class="macro-item">
-                  <strong>Official news releases</strong>
-                  <span class="muted">Waiting for the first release...</span>
-                </div>
-              </div>
+              <div class="panel-header"><h3>Official News Release</h3><span class="muted small-text">Official release timeline</span></div>
+              <div id="macroFeed" class="macro-body"><div class="macro-item"><strong>Official news releases</strong><span class="muted">Waiting for the first release...</span></div></div>
             </div>
           </div>
         </div>
       </div>
       <aside class="right-col">
         <div class="panel card news-panel">
-          <div class="panel-header">
-            <h3>News</h3>
-            <span class="muted small-text">Live headlines</span>
-          </div>
-          <div id="newsFeed" class="news-body">
-            <div class="news-item">
-              <strong>Market feed</strong>
-              <span class="muted">Awaiting the next headline...</span>
-            </div>
-          </div>
+          <div class="panel-header"><h3>News</h3><span class="muted small-text">Live headlines</span></div>
+          <div id="newsFeed" class="news-body"><div class="news-item"><strong>Market feed</strong><span class="muted">Awaiting the next headline...</span></div></div>
         </div>
       </aside>
     </div>
@@ -186,14 +111,8 @@
         <p class="muted">Your final performance metrics</p>
         <div id="endMetricsGrid" class="end-metrics-grid"></div>
         <div class="end-chart-grid">
-          <div class="end-chart-card">
-            <h3>Total PnL</h3>
-            <canvas id="endPnlChart" width="780" height="240" aria-label="Total PnL over game time"></canvas>
-          </div>
-          <div class="end-chart-card">
-            <h3>% Invested</h3>
-            <canvas id="endInvestedChart" width="780" height="240" aria-label="Invested percentage over game time"></canvas>
-          </div>
+          <div class="end-chart-card"><h3>Total PnL</h3><canvas id="endPnlChart" width="780" height="240" aria-label="Total PnL over game time"></canvas></div>
+          <div class="end-chart-card"><h3>% Invested</h3><canvas id="endInvestedChart" width="780" height="240" aria-label="Invested percentage over game time"></canvas></div>
         </div>
       </div>
     </section>

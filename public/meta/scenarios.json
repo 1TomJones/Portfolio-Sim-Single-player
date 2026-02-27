@@ -1,12 +1,5 @@
 [
   {
-    "id": "default",
-    "name": "Default Market Session",
-    "description": "Baseline scenario loaded by admin before start.",
-    "duration_seconds": 300,
-    "version": "2.0.0"
-  },
-  {
     "id": "macro-six-month",
     "name": "Official News Release vs Actuals (6M)",
     "description": "Six in-game months of official news releases vs actual outcomes.",
