@@ -457,15 +457,81 @@ function applyMajorAssetMomentums() {
 }
 
 let sim = createSimulationState(fallbackScenarioId);
-const players = new Map();
+let players = new Map();
+let activeRoomId = null;
+const sessions = new Map();
 const loadedScenarios = listScenarios();
 console.log(`Loaded ${loadedScenarios.length} scenarios: ${loadedScenarios.map((scenario) => scenario.id).join(", ")}`);
 
 function resetSimulation(scenarioId = SINGLE_PLAYER_SCENARIO_ID) {
   sim = createSimulationState(scenarioId || SINGLE_PLAYER_SCENARIO_ID);
-  io.emit("assetSnapshot", { assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, simStartMs: sim.simStartMs, tick: sim.tick, durationTicks: sim.durationTicks, scenario: sim.scenario });
-  io.emit("macroEvents", macroPayload());
+  emitSession("assetSnapshot", { assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, simStartMs: sim.simStartMs, tick: sim.tick, durationTicks: sim.durationTicks, scenario: sim.scenario });
+  emitSession("macroEvents", macroPayload());
   broadcastLeaderboard();
+}
+
+function emitSession(eventName, payload) {
+  if (activeRoomId) {
+    io.to(activeRoomId).emit(eventName, payload);
+    return;
+  }
+  io.emit(eventName, payload);
+}
+
+function withSession(session, callback) {
+  const previousSim = sim;
+  const previousPlayers = players;
+  const previousRoomId = activeRoomId;
+  sim = session.sim;
+  players = session.players;
+  activeRoomId = session.roomId;
+  try {
+    const result = callback();
+    session.sim = sim;
+    session.players = players;
+    return result;
+  } finally {
+    sim = previousSim;
+    players = previousPlayers;
+    activeRoomId = previousRoomId;
+  }
+}
+
+function createSession(sessionId) {
+  const roomId = `sim:${sessionId}`;
+  return {
+    id: sessionId,
+    roomId,
+    sim: createSimulationState(fallbackScenarioId),
+    players: new Map(),
+    tickTimer: null,
+    leaderboardTimer: null,
+  };
+}
+
+function startSessionTicking(session) {
+  withSession(session, () => {
+    if (session.tickTimer) clearInterval(session.tickTimer);
+    session.tickTimer = setInterval(() => {
+      withSession(session, () => stepTick());
+    }, sim.simCfg.tickMs);
+
+    if (session.leaderboardTimer) clearInterval(session.leaderboardTimer);
+    session.leaderboardTimer = setInterval(() => {
+      withSession(session, () => broadcastLeaderboard());
+    }, 5000);
+  });
+}
+
+function stopSessionTicking(session) {
+  if (session.tickTimer) {
+    clearInterval(session.tickTimer);
+    session.tickTimer = null;
+  }
+  if (session.leaderboardTimer) {
+    clearInterval(session.leaderboardTimer);
+    session.leaderboardTimer = null;
+  }
 }
 
 function activateScenario(scenarioId) {
@@ -489,7 +555,7 @@ function rosterPayload() {
 }
 
 function broadcastRoster() {
-  io.emit("roster", rosterPayload());
+  emitSession("roster", rosterPayload());
 }
 
 function applyDurationOverride(durationMinutes) {
@@ -853,7 +919,7 @@ function leaderboardPayload() {
 }
 
 function broadcastLeaderboard() {
-  io.emit("leaderboard", leaderboardPayload());
+  emitSession("leaderboard", leaderboardPayload());
 }
 
 function publishPortfolio(player) {
@@ -1073,7 +1139,7 @@ function applyNewsIfAny() {
 
     const macroLinked = sim.macroEvents.some((event) => Number(event.actualTick) === Number(sim.tick));
 
-    io.emit("news", {
+    emitSession("news", {
       tick: sim.tick,
       gameTimeMs: currentGameTimestampMs(),
       headline: nextNews.headline,
@@ -1281,8 +1347,8 @@ function stepTick() {
   }
 
 
-  io.emit("assetTick", { assets: updates, tick: sim.tick, durationTicks: sim.durationTicks });
-  io.emit("macroEvents", macroPayload());
+  emitSession("assetTick", { assets: updates, tick: sim.tick, durationTicks: sim.durationTicks });
+  emitSession("macroEvents", macroPayload());
 
   for (const player of players.values()) {
     publishPortfolio(player);
@@ -1299,16 +1365,9 @@ function stepTick() {
 
 }
 
-function startTicking() {
-  if (sim.tickTimer) clearInterval(sim.tickTimer);
-  sim.tickTimer = setInterval(stepTick, sim.simCfg.tickMs);
-  if (sim.leaderboardTimer) clearInterval(sim.leaderboardTimer);
-  sim.leaderboardTimer = setInterval(() => broadcastLeaderboard(), 5000);
-}
-
 function setPhase(nextPhase) {
   sim.phase = nextPhase;
-  io.emit("phase", nextPhase);
+  emitSession("phase", nextPhase);
   if (nextPhase === "ended") publishEndSummaries();
 }
 
@@ -1371,7 +1430,8 @@ app.use((req, _res, next) => {
 
 app.get("/api/events/:code/players", (req, res) => {
   const eventCode = req.params.code;
-  const rows = [...players.values()]
+  const rows = [...sessions.values()]
+    .flatMap((session) => [...session.players.values()])
     .filter((player) => !eventCode || player.eventCode === eventCode)
     .map((player) => ({
       runId: player.runId,
@@ -1385,11 +1445,16 @@ app.get("/api/events/:code/players", (req, res) => {
 
 app.get("/api/events/:code/status", (req, res) => {
   const code = req.params.code;
-  res.json({ eventCode: code, phase: sim.phase });
+  const hasRunningSession = [...sessions.values()].some((session) => session.sim.phase === "running");
+  res.json({ eventCode: code, phase: hasRunningSession ? "running" : "lobby" });
 });
 
 app.get("/api/leaderboard", (_req, res) => {
-  res.json(leaderboardPayload());
+  const rows = [...sessions.values()]
+    .flatMap((session) => withSession(session, () => leaderboardPayload().rows))
+    .sort((a, b) => b.finalScore - a.finalScore)
+    .map((row, index) => ({ ...row, rank: index + 1 }));
+  res.json({ updatedAt: Date.now(), rows });
 });
 
 io.on("connection", (socket) => {
@@ -1397,85 +1462,141 @@ io.on("connection", (socket) => {
   const roomId = `player:${socket.id}`;
   socket.join(roomId);
 
+  const sessionId = String(socket.id || `session-${Date.now()}`);
+  const session = createSession(sessionId);
+  sessions.set(sessionId, session);
+  socket.join(session.roomId);
+
+  const emitSessionBootstrap = () => {
+    withSession(session, () => {
+      socket.emit("phase", sim.phase);
+      socket.emit("assetSnapshot", {
+        assets: initialAssetPayload(),
+        tickMs: sim.simCfg.tickMs,
+        simStartMs: sim.simStartMs,
+        tick: sim.tick,
+        durationTicks: sim.durationTicks,
+        scenario: sim.scenario,
+      });
+      socket.emit("macroEvents", macroPayload());
+      socket.emit("leaderboard", leaderboardPayload());
+    });
+  };
+
   if (role === "leaderboard") {
-    socket.emit("phase", sim.phase);
-    socket.emit("leaderboard", leaderboardPayload());
+    socket.emit("phase", "lobby");
+    socket.emit("leaderboard", { updatedAt: Date.now(), rows: [] });
   } else {
-    socket.emit("phase", sim.phase);
-    socket.emit("assetSnapshot", { assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, simStartMs: sim.simStartMs, tick: sim.tick, durationTicks: sim.durationTicks, scenario: sim.scenario });
-    socket.emit("macroEvents", macroPayload());
-    socket.emit("leaderboard", leaderboardPayload());
+    emitSessionBootstrap();
   }
 
   socket.on("join", (payload, ack) => {
-    const nameInput = typeof payload === "string" ? payload : payload?.name;
-    const nm = String(nameInput || "Player").trim() || "Player";
-    const runId = String(payload?.runId || `socket-${socket.id}`);
+    withSession(session, () => {
+      const nameInput = typeof payload === "string" ? payload : payload?.name;
+      const nm = String(nameInput || "Player").trim() || "Player";
+      const runId = String(payload?.runId || `socket-${socket.id}`);
 
-    players.set(socket.id, {
-      id: socket.id,
-      roomId,
-      runId,
-      eventCode: "local-single-player",
-      name: nm,
-      positions: {},
-      orders: [],
-      freeCash: DEFAULT_CASH,
-      shortCollateral: 0,
-      cash: DEFAULT_CASH,
-      shortProceedsLocked: 0,
-      joinedAt: new Date().toISOString(),
-      status: "active",
-      latestScore: null,
-      scoringHistory: [],
+      players.set(socket.id, {
+        id: socket.id,
+        roomId,
+        runId,
+        eventCode: "local-single-player",
+        name: nm,
+        positions: {},
+        orders: [],
+        freeCash: DEFAULT_CASH,
+        shortCollateral: 0,
+        cash: DEFAULT_CASH,
+        shortProceedsLocked: 0,
+        joinedAt: new Date().toISOString(),
+        status: "active",
+        latestScore: null,
+        scoringHistory: [],
+      });
+
+      if (sim.phase !== "running") {
+        setPhase("running");
+        startSessionTicking(session);
+      }
+      broadcastRoster();
+      ack?.({
+        ok: true,
+        phase: sim.phase,
+        assets: initialAssetPayload(),
+        tickMs: sim.simCfg.tickMs,
+        durationTicks: sim.durationTicks,
+        scenario: sim.scenario,
+        ...rosterPayload(),
+      });
+      socket.emit("macroEvents", macroPayload());
+      publishPortfolio(players.get(socket.id));
+      if (sim.phase === "ended") publishEndSummary(players.get(socket.id));
+      broadcastLeaderboard();
     });
-
-    if (sim.phase !== "running") setPhase("running");
-    broadcastRoster();
-    ack?.({ ok: true, phase: sim.phase, assets: initialAssetPayload(), tickMs: sim.simCfg.tickMs, durationTicks: sim.durationTicks, scenario: sim.scenario, ...rosterPayload() });
-    socket.emit("macroEvents", macroPayload());
-    publishPortfolio(players.get(socket.id));
-    if (sim.phase === "ended") publishEndSummary(players.get(socket.id));
-    broadcastLeaderboard();
   });
 
   socket.on("submitOrder", (order, ack) => {
-    const player = players.get(socket.id);
-    if (!player) {
-      ack?.({ ok: false, reason: "not-joined" });
-      return;
-    }
-    if (sim.phase !== "running") {
-      ack?.({ ok: false, reason: "market-paused" });
-      return;
-    }
+    withSession(session, () => {
+      const player = players.get(socket.id);
+      if (!player) {
+        ack?.({ ok: false, reason: "not-joined" });
+        return;
+      }
+      if (sim.phase !== "running") {
+        ack?.({ ok: false, reason: "market-paused" });
+        return;
+      }
 
-    const asset = sim.assets.find((item) => item.id === order?.assetId);
-    if (!asset) {
-      ack?.({ ok: false, reason: "unknown-asset" });
-      return;
-    }
-    if (!isAssetListed(asset)) {
-      ack?.({ ok: false, reason: "asset-not-listed" });
-      return;
-    }
+      const asset = sim.assets.find((item) => item.id === order?.assetId);
+      if (!asset) {
+        ack?.({ ok: false, reason: "unknown-asset" });
+        return;
+      }
+      if (!isAssetListed(asset)) {
+        ack?.({ ok: false, reason: "asset-not-listed" });
+        return;
+      }
 
-    const qty = Math.max(1, Math.floor(Number(order?.qty || 0)));
-    const side = order?.side === "sell" ? "sell" : "buy";
-    const type = order?.type === "limit" ? "limit" : "market";
-    const limitPrice = Number(order?.price);
+      const qty = Math.max(1, Math.floor(Number(order?.qty || 0)));
+      const side = order?.side === "sell" ? "sell" : "buy";
+      const type = order?.type === "limit" ? "limit" : "market";
+      const limitPrice = Number(order?.price);
 
-    if (!Number.isFinite(qty) || qty <= 0) {
-      ack?.({ ok: false, reason: "bad-qty" });
-      return;
-    }
+      if (!Number.isFinite(qty) || qty <= 0) {
+        ack?.({ ok: false, reason: "bad-qty" });
+        return;
+      }
 
-    if (type === "market") {
-      const validation = validateOrderBudget(player, asset, side, qty, asset.price);
+      if (type === "market") {
+        const validation = validateOrderBudget(player, asset, side, qty, asset.price);
+        if (!validation.ok && side === "buy") {
+          ack?.({ ok: false, reason: validation.reason === "insufficient-covering-power" ? "insufficient-covering-power" : "insufficient-cash" });
+          return;
+        }
+        const shortable = canShortAsset(asset);
+        const owned = Math.max(0, Number(ensurePosition(player, asset.id).position || 0));
+        const effectiveQty = Math.max(0, Number(validation.effectiveQty ?? (side === "sell" && !shortable ? Math.min(qty, owned) : qty)));
+        if (side === "sell" && effectiveQty <= 0) {
+          ack?.({ ok: true, filled: false, qty: 0 });
+          return;
+        }
+        const fill = fillOrder(player, { assetId: asset.id, side, qty: effectiveQty, price: asset.price }, asset);
+        broadcastLeaderboard();
+        ack?.({ ok: true, filled: (fill?.filledQty || 0) > 0, qty: fill?.filledQty || 0 });
+        return;
+      }
+
+      if (!Number.isFinite(limitPrice)) {
+        ack?.({ ok: false, reason: "bad-price" });
+        return;
+      }
+
+      const validation = validateOrderBudget(player, asset, side, qty, limitPrice);
       if (!validation.ok && side === "buy") {
         ack?.({ ok: false, reason: validation.reason === "insufficient-covering-power" ? "insufficient-covering-power" : "insufficient-cash" });
         return;
       }
+
       const shortable = canShortAsset(asset);
       const owned = Math.max(0, Number(ensurePosition(player, asset.id).position || 0));
       const effectiveQty = Math.max(0, Number(validation.effectiveQty ?? (side === "sell" && !shortable ? Math.min(qty, owned) : qty)));
@@ -1483,55 +1604,35 @@ io.on("connection", (socket) => {
         ack?.({ ok: true, filled: false, qty: 0 });
         return;
       }
-      const fill = fillOrder(player, { assetId: asset.id, side, qty: effectiveQty, price: asset.price }, asset);
+
+      const orderData = {
+        id: `order-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        assetId: asset.id,
+        side,
+        qty: effectiveQty,
+        price: quantize(limitPrice, asset.decimals),
+        type,
+        t: Date.now(),
+      };
+
+      player.orders.push(orderData);
+      publishPortfolio(player);
       broadcastLeaderboard();
-      ack?.({ ok: true, filled: (fill?.filledQty || 0) > 0, qty: fill?.filledQty || 0 });
-      return;
-    }
-
-    if (!Number.isFinite(limitPrice)) {
-      ack?.({ ok: false, reason: "bad-price" });
-      return;
-    }
-
-    const validation = validateOrderBudget(player, asset, side, qty, limitPrice);
-    if (!validation.ok && side === "buy") {
-      ack?.({ ok: false, reason: validation.reason === "insufficient-covering-power" ? "insufficient-covering-power" : "insufficient-cash" });
-      return;
-    }
-
-    const shortable = canShortAsset(asset);
-    const owned = Math.max(0, Number(ensurePosition(player, asset.id).position || 0));
-    const effectiveQty = Math.max(0, Number(validation.effectiveQty ?? (side === "sell" && !shortable ? Math.min(qty, owned) : qty)));
-    if (side === "sell" && effectiveQty <= 0) {
-      ack?.({ ok: true, filled: false, qty: 0 });
-      return;
-    }
-
-    const orderData = {
-      id: `order-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-      assetId: asset.id,
-      side,
-      qty: effectiveQty,
-      price: quantize(limitPrice, asset.decimals),
-      type,
-      t: Date.now(),
-    };
-
-    player.orders.push(orderData);
-    publishPortfolio(player);
-    broadcastLeaderboard();
-    ack?.({ ok: true, filled: false });
+      ack?.({ ok: true, filled: false });
+    });
   });
-
 
   socket.on("disconnect", () => {
-    players.delete(socket.id);
-    broadcastRoster();
+    withSession(session, () => {
+      players.delete(socket.id);
+      broadcastRoster();
+    });
+    if (session.players.size === 0) {
+      stopSessionTicking(session);
+      sessions.delete(sessionId);
+    }
   });
 });
-
-startTicking();
 
 server.listen(PORT, () => {
   console.log(`Server running on ${PORT}. Scenario: ${sim.scenario.id || "unknown"}`);
